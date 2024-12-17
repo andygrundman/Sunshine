@@ -324,7 +324,7 @@ namespace stream {
     std::thread audio_thread;
     std::thread control_thread;
 
-    asio::io_service io;
+    asio::io_context io;
 
     udp::socket video_sock { io };
     udp::socket audio_sock { io };
