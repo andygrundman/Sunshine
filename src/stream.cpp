@@ -1631,14 +1631,23 @@ namespace stream {
       }
 
       TUPLE_2D_REF(channel_data, packet_data, *packet);
+      // XXX for transporting packet_timestamp?
+      // TUPLE_3D_REF(channel_data, packet_data, packet_timestamp, *packet);
       auto session = (session_t *) channel_data;
 
       auto sequenceNumber = session->audio.sequenceNumber;
       // Audio timestamps are in milliseconds and should be AudioPacketDuration (5ms or 10ms) apart
+
+      // XXX fix packet->packet_timestamp
+      // auto packet_time_point = std::chrono::steady_clock::time_point(
+      //   std::chrono::microseconds(packet->packet_timestamp)
+      // );
+
       auto timestamp = static_cast<std::uint32_t>(
-        std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+          // std::chrono::steady_clock::now() - packet_time_point
           std::chrono::steady_clock::now() - session->audio.timestamp_epoch
-        ).count() / 1000.0
+        ).count()
       );
 
       *(std::uint32_t *) iv.data() = util::endian::big<std::uint32_t>(session->audio.avRiKeyId + sequenceNumber);

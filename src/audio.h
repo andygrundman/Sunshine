@@ -69,6 +69,8 @@ namespace audio {
 
   using buffer_t = util::buffer_t<std::uint8_t>;
   using packet_t = std::pair<void *, buffer_t>;
+  // XXX maybe change to this for adding packet_timestamp
+  // using packet_t = std::tuple<void *, buffer_t, std::uint64_t>;
   using audio_ctx_ref_t = safe::shared_t<audio_ctx_t>::ptr_t;
 
   void

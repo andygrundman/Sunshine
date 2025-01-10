@@ -572,6 +572,7 @@ namespace platf::audio {
       // number of samples / number of channels
       struct block_aligned_t {
         std::uint32_t audio_sample_size;
+        std::uint64_t packet_timestamp;
       } block_aligned;
 
       // Check if the default audio device has changed
@@ -606,7 +607,8 @@ namespace platf::audio {
           (BYTE **) &sample_aligned.samples,
           &block_aligned.audio_sample_size,
           &buffer_flags,
-          nullptr, nullptr);
+          nullptr,
+          &block_aligned.packet_timestamp);
 
         switch (status) {
           case S_OK:
@@ -637,6 +639,7 @@ namespace platf::audio {
         }
 
         sample_buf_pos += n;
+        packet_timestamp = block_aligned.packet_timestamp;
 
         audio_capture->ReleaseBuffer(block_aligned.audio_sample_size);
       }
@@ -668,6 +671,7 @@ namespace platf::audio {
     util::buffer_t<float> sample_buf;
     float *sample_buf_pos;
     int channels;
+    std::uint64_t packet_timestamp;
 
     HANDLE mmcss_task_handle = NULL;
   };
