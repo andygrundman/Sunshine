@@ -107,6 +107,7 @@ namespace audio {
     opus_multistream_encoder_ctl(opus.get(), OPUS_SET_VBR(0));
 
     BOOST_LOG(info) << "Opus initialized: "sv << stream.sampleRate / 1000 << " kHz, "sv
+                    << config.packetDuration << "ms frame size, "sv
                     << stream.channelCount << " channels, "sv
                     << stream.bitrate / 1000 << " kbps (total), LOWDELAY"sv;
 

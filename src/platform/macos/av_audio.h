@@ -12,7 +12,7 @@
 
 #define kBufferLength 4096
 
-@interface AVAudio: NSObject <AVCaptureAudioDataOutputSampleBufferDelegate> {
+@interface AVAudio: NSObject {
 @public
   TPCircularBuffer audioSampleBuffer;
 }
