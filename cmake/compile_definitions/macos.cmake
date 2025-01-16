@@ -2,10 +2,10 @@
 
 add_compile_definitions(SUNSHINE_PLATFORM="macos")
 
+enable_language(OBJCXX)
+
 set(MACOS_LINK_DIRECTORIES
-        /opt/homebrew/lib
-        /opt/local/lib
-        /usr/local/lib)
+        /opt/homebrew/lib)
 
 foreach(dir ${MACOS_LINK_DIRECTORIES})
     if(EXISTS ${dir})
@@ -21,6 +21,7 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${APP_KIT_LIBRARY}
         ${APP_SERVICES_LIBRARY}
         ${AV_FOUNDATION_LIBRARY}
+        ${CORE_AUDIO_LIBRARY}
         ${CORE_MEDIA_LIBRARY}
         ${CORE_VIDEO_LIBRARY}
         ${FOUNDATION_LIBRARY}
@@ -32,11 +33,14 @@ set(APPLE_PLIST_FILE "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/Info.plist")
 set(SUNSHINE_TRAY 0)
 
 set(PLATFORM_TARGET_FILES
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/av_audio.h"
-        "${CMAKE_SOURCE_DIR}/src/platform/macos/av_audio.m"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/audio_device.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/audio_device.mm"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/audio_tap.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/audio_tap.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/av_img_t.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/av_video.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/av_video.m"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/coreaudio_helpers.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/display.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/input.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/microphone.mm"
