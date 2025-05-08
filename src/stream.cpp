@@ -338,6 +338,8 @@ namespace stream {
     udp::socket audio_sock {io_context};
 
     control_server_t control_server;
+
+    std::chrono::steady_clock::time_point av_timestamp_epoch;
   };
 
   struct session_t {
@@ -1260,10 +1262,9 @@ namespace stream {
     }
   }
 
-  void videoBroadcastThread(udp::socket &sock) {
+  void videoBroadcastThread(udp::socket &sock, std::chrono::steady_clock::time_point av_timestamp_epoch) {
     auto shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     auto packets = mail::man->queue<video::packet_t>(mail::video_packets);
-    auto timebase = boost::posix_time::microsec_clock::universal_time();
 
     // Video traffic is sent on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
@@ -1463,9 +1464,11 @@ namespace stream {
           for (auto x = 0; x < shards.size(); ++x) {
             auto *inspect = (video_packet_raw_t *) shards.data(x);
 
-            // RTP video timestamps use a 90 KHz clock
-            auto now = boost::posix_time::microsec_clock::universal_time();
-            auto timestamp = (now - timebase).total_microseconds() / (1000 / 90);
+            // RTP video timestamps use a 90 KHz clock and the frame_timestamp from when the frame was captured
+            using rtp_tick = std::chrono::duration<uint32_t, std::ratio<1, 90000>>;
+            uint32_t timestamp = std::chrono::round<rtp_tick>(*packet->frame_timestamp - av_timestamp_epoch).count();
+
+            BOOST_LOG(verbose) << "Video [seq "sv << lowseq + x << ", pts "sv << timestamp << "] ::  send..."sv;
 
             inspect->packet.fecInfo =
               (x << 12 |
@@ -1622,6 +1625,8 @@ namespace stream {
         break;
       }
 
+      BOOST_LOG(verbose) << "Audio [seq "sv << sequenceNumber << ", pts "sv << timestamp << "] ::  send..."sv;
+
       audio_packet.rtp.sequenceNumber = util::endian::big(sequenceNumber);
       audio_packet.rtp.timestamp = util::endian::big(timestamp);
 
@@ -1641,7 +1646,6 @@ namespace stream {
           session->localAddress,
         };
         platf::send(send_info);
-        BOOST_LOG(verbose) << "Audio ["sv << sequenceNumber << "] ::  send..."sv;
 
         auto &fec_packet = session->audio.fec_packet;
         // initialize the FEC header at the beginning of the FEC block
@@ -1730,9 +1734,12 @@ namespace stream {
       return -1;
     }
 
+    // The starting point for video RTP timestamps
+    ctx.av_timestamp_epoch = std::chrono::steady_clock::now();
+
     ctx.message_queue_queue = std::make_shared<message_queue_queue_t::element_type>(30);
 
-    ctx.video_thread = std::thread {videoBroadcastThread, std::ref(ctx.video_sock)};
+    ctx.video_thread = std::thread {videoBroadcastThread, std::ref(ctx.video_sock), ctx.av_timestamp_epoch};
     ctx.audio_thread = std::thread {audioBroadcastThread, std::ref(ctx.audio_sock)};
     ctx.control_thread = std::thread {controlBroadcastThread, &ctx.control_server};
 
