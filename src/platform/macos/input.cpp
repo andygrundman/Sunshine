@@ -249,7 +249,7 @@ const KeyCodeMap kKeyCodesMap[] = {
   void keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
     auto key = keysym(modcode);
 
-    BOOST_LOG(debug) << "got keycode: 0x"sv << std::hex << modcode << ", translated to: 0x" << std::hex << key << ", release:" << release;
+    BOOST_LOG(verbose) << "got keycode: 0x"sv << std::hex << modcode << ", translated to: 0x" << std::hex << key << ", release:" << release;
 
     if (key < 0) {
       return;
@@ -332,7 +332,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     const util::point_t previous_location,
     const int click_count
   ) {
-    BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << raw_location.x << ":"sv << raw_location.y << " click_count: "sv << click_count;
+    BOOST_LOG(verbose) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << raw_location.x << ":"sv << raw_location.y << " click_count: "sv << click_count;
 
     const auto macos_input = static_cast<macos_input_t *>(input.get());
     const auto display = macos_input->display;

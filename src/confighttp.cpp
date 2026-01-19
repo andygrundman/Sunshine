@@ -57,20 +57,20 @@ namespace confighttp {
    * @param request The HTTP request object.
    */
   void print_req(const req_https_t &request) {
-    BOOST_LOG(debug) << "METHOD :: "sv << request->method;
-    BOOST_LOG(debug) << "DESTINATION :: "sv << request->path;
+    BOOST_LOG(verbose) << "METHOD :: "sv << request->method;
+    BOOST_LOG(verbose) << "DESTINATION :: "sv << request->path;
 
     for (auto &[name, val] : request->header) {
-      BOOST_LOG(debug) << name << " -- " << (name == "Authorization" ? "CREDENTIALS REDACTED" : val);
+      BOOST_LOG(verbose) << name << " -- " << (name == "Authorization" ? "CREDENTIALS REDACTED" : val);
     }
 
-    BOOST_LOG(debug) << " [--] "sv;
+    BOOST_LOG(verbose) << " [--] "sv;
 
     for (auto &[name, val] : request->parse_query_string()) {
-      BOOST_LOG(debug) << name << " -- " << val;
+      BOOST_LOG(verbose) << name << " -- " << val;
     }
 
-    BOOST_LOG(debug) << " [--] "sv;
+    BOOST_LOG(verbose) << " [--] "sv;
   }
 
   /**

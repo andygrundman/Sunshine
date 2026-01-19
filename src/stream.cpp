@@ -527,8 +527,8 @@ namespace stream {
         throw;
       }
 
-      BOOST_LOG(debug) << "Control local address ["sv << local_address << ']';
-      BOOST_LOG(debug) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
+      BOOST_LOG(verbose) << "Control local address ["sv << local_address << ']';
+      BOOST_LOG(verbose) << "Control peer address ["sv << peer_addr << ':' << peer_port << ']';
 
       // Insert this into the map for O(1) lookups in the future
       auto ptslg = _peer_to_session.lock();
