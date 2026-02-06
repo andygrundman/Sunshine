@@ -2,7 +2,7 @@
 # put anything here that applies to both linux and macos
 
 # return here if building a macos package
-if(SUNSHINE_PACKAGE_MACOS)
+if(APPLE)
     return()
 endif()
 

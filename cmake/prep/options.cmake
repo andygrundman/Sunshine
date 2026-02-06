@@ -7,6 +7,9 @@ set(SUNSHINE_PUBLISHER_ISSUE_URL "https://app.lizardbyte.dev/support"
         CACHE STRING "The URL of the publisher's support site or issue tracker.
         If you provide a modified version of Sunshine, we kindly request that you use your own url.")
 
+set(SUNSHINE_BUNDLE_IDENTIFIER "dev.lizardbyte.sunshine"
+        CACHE STRING "The macOS bundle identifier for Sunshine.")
+
 option(BUILD_DOCS "Build documentation" ON)
 option(BUILD_TESTS "Build tests" ON)
 option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in your npm cache." OFF)
@@ -41,8 +44,8 @@ endif()
 if(APPLE)
     option(SUNSHINE_CONFIGURE_PORTFILE
             "Configure macOS Portfile. Recommended to use with SUNSHINE_CONFIGURE_ONLY" OFF)
-    option(SUNSHINE_PACKAGE_MACOS
-            "Should only be used when creating a macOS package/dmg." OFF)
+    option(SUNSHINE_MACOS_CODESIGN
+            "Sign everything using the identity in \$CODE_SIGN_IDENTITY" OFF)
 elseif(UNIX)  # Linux
     option(SUNSHINE_BUILD_APPIMAGE
             "Enable an AppImage build." OFF)

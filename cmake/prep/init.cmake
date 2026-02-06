@@ -1,5 +1,8 @@
 if (WIN32)
 elseif (APPLE)
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
+    set(CMAKE_INSTALL_RPATH "")
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 elseif (UNIX)
     include(GNUInstallDirs)
 
