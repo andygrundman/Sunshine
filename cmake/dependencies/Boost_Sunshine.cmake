@@ -7,6 +7,7 @@ set(BOOST_VERSION "1.90.0")
 set(BOOST_COMPONENTS
         filesystem
         locale
+        log_setup
         log
         program_options
         system
@@ -27,10 +28,42 @@ if(BOOST_USE_STATIC)
     set(Boost_USE_STATIC_LIBS ON)  # cmake-lint: disable=C0103
 endif()
 
-if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
-    cmake_policy(SET CMP0167 NEW)  # Get BoostConfig.cmake from upstream
+set(SUNSHINE_BOOST_LIBRARY_DIR "" CACHE PATH "Preferred Boost library directory (for example universal macOS Boost libs)")
+
+# Reuse the universal macOS library directory when provided by scripts/macos_build.sh.
+# if(APPLE AND MACOS_UNIVERSAL_PREFIX AND NOT SUNSHINE_BOOST_LIBRARY_DIR)
+#     set(SUNSHINE_BOOST_LIBRARY_DIR "${MACOS_UNIVERSAL_PREFIX}")
+# endif()
+
+set(SUNSHINE_BOOST_USE_CONFIG_PACKAGE TRUE)
+if(SUNSHINE_BOOST_LIBRARY_DIR OR Boost_NO_BOOST_CMAKE)
+    set(SUNSHINE_BOOST_USE_CONFIG_PACKAGE FALSE)
 endif()
-find_package(Boost CONFIG ${BOOST_VERSION} EXACT COMPONENTS ${BOOST_COMPONENTS})
+
+if(SUNSHINE_BOOST_USE_CONFIG_PACKAGE)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
+        cmake_policy(SET CMP0167 NEW)  # Prefer upstream BoostConfig.cmake
+    endif()
+    find_package(Boost CONFIG ${BOOST_VERSION} EXACT COMPONENTS ${BOOST_COMPONENTS})
+else()
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
+        cmake_policy(SET CMP0167 OLD)  # Allow module-based FindBoost lookup
+    endif()
+    set(Boost_NO_BOOST_CMAKE ON)  # cmake-lint: disable=C0103
+
+    if(SUNSHINE_BOOST_LIBRARY_DIR)
+        message(STATUS "Boost library override dir: ${SUNSHINE_BOOST_LIBRARY_DIR}")
+        set(Boost_LIBRARY_DIR_RELEASE "${SUNSHINE_BOOST_LIBRARY_DIR}")  # cmake-lint: disable=C0103
+        set(Boost_LIBRARY_DIR_DEBUG "${SUNSHINE_BOOST_LIBRARY_DIR}")  # cmake-lint: disable=C0103
+    endif()
+
+    set(SUNSHINE_BOOST_FIND_COMPONENTS ${BOOST_COMPONENTS})
+    if(BOOST_VERSION VERSION_GREATER_EQUAL "1.89.0")
+        list(REMOVE_ITEM SUNSHINE_BOOST_FIND_COMPONENTS system)
+    endif()
+
+    find_package(Boost ${BOOST_VERSION} EXACT COMPONENTS ${SUNSHINE_BOOST_FIND_COMPONENTS})
+endif()
 if(NOT Boost_FOUND)
     message(STATUS "Boost v${BOOST_VERSION} package not found in the system. Falling back to FetchContent.")
     include(FetchContent)

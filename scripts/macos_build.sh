@@ -37,6 +37,14 @@ required_formulas=(
   "llvm"
 )
 
+# brew libraries that we will link with, these need to be fat binaries
+to_fatten=(
+  "boost"
+  "miniupnpc"
+  "openssl@3"
+  "opus"
+)
+
 function _usage() {
   local exit_code=$1
 
@@ -78,23 +86,88 @@ EOF
   exit "$exit_code"
 }
 
+create_universal() {
+  local pkg="${1:?package name required}"
+  local out_local="${build_dir}/local-universal"
+  local tmp_x86="${build_dir}/local-universal/${pkg}-x86_64"
+
+  echo
+  echo "==> Making universal binary for: ${pkg}"
+
+  # Fetch both bottles, since the arm64 one has probably been removed
+  brew fetch --force "${pkg}"
+  brew fetch --force --bottle-tag=x86_64_sonoma "${pkg}"
+
+  local arm_tgz x86_tgz
+  arm_tgz="$(brew --cache "${pkg}")"
+  x86_tgz="$(brew --cache --bottle-tag=x86_64_sonoma "${pkg}")"
+
+  [[ -f "${arm_tgz}" ]] || { echo "ERROR: missing arm64 bottle: ${arm_tgz}" >&2; return 1; }
+  [[ -f "${x86_tgz}" ]] || { echo "ERROR: missing x86_64 bottle: ${x86_tgz}" >&2; return 1; }
+
+  # Extract arm64 bottle
+  mkdir -p "${out_local}"
+  /usr/bin/tar -xzf "${arm_tgz}" -C "${out_local}" --strip-components=2
+
+  # Extract x86 bottle, only the libraries. Uses explicit system tar for --include.
+  rm -rf "${tmp_x86}"
+  mkdir -p "${tmp_x86}"
+  /usr/bin/tar -xzf "${x86_tgz}" -C "${tmp_x86}" --strip-components=2 --include='*.dylib' --include='*.a'
+
+  # Fatten all .a and .dylib files found in the x86 tree
+  local x86_file rel arm_file
+  while IFS= read -r -d '' x86_file; do
+    # Path relative to tmp_x86 (e.g. "lib/foo/libbar.a")
+    rel="${x86_file#${tmp_x86}/}"
+    arm_file="${out_local}/${rel}"
+
+    if [[ ! -f "${arm_file}" ]]; then
+      echo "warning: missing arm64 counterpart for ${rel}"
+      continue
+    fi
+
+    echo "lipo: ${rel}"
+    lipo -create -output "${arm_file}" "${arm_file}" "${x86_file}"
+
+    if [[ "$arm_file" == *.dylib ]]; then
+      local token='@@HOMEBREW_PREFIX@@'
+      install_name_tool -change "${token}" "${out_local}" "${arm_file}"
+    fi
+  done < <(find "${tmp_x86}" -type f \( -name "*.a" -o -name "*.dylib" \) -print0)
+}
+
 function run_step_deps() {
   echo "Running step: Install dependencies"
   brew update
   brew install "${required_formulas[@]}"
+
+  for pkg in "${to_fatten[@]}"; do
+      create_universal "${pkg}"
+  done
+
   return 0
 }
 
 function run_step_cmake() {
   echo "Running step: CMake configure"
 
+  # point to our universal libs
+  FFMPEG_ROOT="/Users/andy/Downloads/universal/ffmpeg"
+  MACOS_UNIVERSAL_PREFIX="${build_dir}/local-universal"
+
   # prepare CMAKE args
   cmake_args=(
     "-B=build"
     "-S=."
     "-DCMAKE_BUILD_TYPE=${build_type}"
+    "-DCMAKE_PREFIX_PATH=${MACOS_UNIVERSAL_PREFIX}"
+    "-DBoost_VERBOSE=ON"
     "-DBUILD_WERROR=ON"
-    "-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3 2>/dev/null)"
+    "-DCMAKE_POLICY_DEFAULT_CMP0167=OLD" # keep FindBoost module available when needed
+    "-DFFMPEG_PREPARED_BINARIES=${FFMPEG_ROOT}"
+    "-DMACOS_UNIVERSAL_PREFIX=${MACOS_UNIVERSAL_PREFIX}"
+    "-DOPENSSL_ROOT_DIR=${MACOS_UNIVERSAL_PREFIX}"
+    "-DSUNSHINE_BOOST_LIBRARY_DIR=${MACOS_UNIVERSAL_PREFIX}/lib"
     "-DSUNSHINE_BUILD_HOMEBREW=OFF"
     "-DSUNSHINE_ENABLE_TRAY=ON"
     "-DBUILD_DOCS=${build_docs}"

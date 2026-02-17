@@ -4,6 +4,14 @@ cmake_minimum_required(VERSION 3.20)
 # `cmake_path(CONVERT ... TO_NATIVE_PATH_LIST ...)` requires 3.20
 # todo - set this conditionally
 
+if(APPLE)
+  option(BUILD_UNIVERSAL "Build a universal macOS binary. Requires prebuilt Boost." ON)
+  if (BUILD_UNIVERSAL)
+    # this is here because it must be set before project()
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architectures for OSX" FORCE)
+  endif()
+endif()
+
 project(Sunshine VERSION 0.0.0
         DESCRIPTION "Self-hosted game stream host for Moonlight"
         HOMEPAGE_URL "https://app.lizardbyte.dev/Sunshine")

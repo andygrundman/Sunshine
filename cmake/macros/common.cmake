@@ -23,7 +23,6 @@ macro(find_package)  # cmake-lint: disable=C0103
     )
         # Do nothing, as the package has already been fetched
     else()
-        # Call the original find_package function
         _find_package(${ARGV})
     endif()
 endmacro()

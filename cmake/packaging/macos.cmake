@@ -39,7 +39,7 @@ install(CODE "
     message(STATUS \"Running fixup_bundle for: \${_app}\")
     include(BundleUtilities)
     set(BU_CHMOD_BUNDLE_ITEMS TRUE)
-    fixup_bundle(\"\${_app}\" \"\" \"\")
+    fixup_bundle(\"\${_app}\" \"\" \"${MACOS_UNIVERSAL_PREFIX}/lib /opt/homebrew/lib\")
 
     # Remove Finder/resource-fork metadata that breaks codesign.
     execute_process(COMMAND /usr/bin/xattr -rc \"\${_app}\")

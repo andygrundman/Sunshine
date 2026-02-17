@@ -6,16 +6,26 @@ add_compile_definitions(SUNSHINE_PLATFORM="macos")
 set(SUNSHINE_ASSETS_DIR "${CMAKE_PROJECT_NAME}.app/Contents/Resources/assets")
 set(SUNSHINE_ASSETS_DIR_DEF "../Resources/assets")
 
-set(MACOS_LINK_DIRECTORIES
-        /opt/homebrew/lib
-        /opt/local/lib
-        /usr/local/lib)
+# custom library dir used by macos_build.sh for universal binaries
+set(MACOS_UNIVERSAL_PREFIX "" CACHE STRING "Local build dir for universal binaries, must contain include and lib dirs")
+if(MACOS_UNIVERSAL_PREFIX)
+    set(MACOS_LINK_DIRECTORIES "${MACOS_UNIVERSAL_PREFIX}/lib")
+else()
+    set(MACOS_LINK_DIRECTORIES
+          /opt/homebrew/lib
+          /opt/local/lib
+          /usr/local/lib)
+endif()
 
 foreach(dir ${MACOS_LINK_DIRECTORIES})
     if(EXISTS ${dir})
         link_directories(${dir})
     endif()
 endforeach()
+
+if(NOT HOMEBREW_PREFIX)
+    set(HOMEBREW_PREFIX "${MACOS_UNIVERSAL_PREFIX}")
+endif()
 
 if(NOT BOOST_USE_STATIC AND NOT FETCH_CONTENT_BOOST_USED)
     ADD_DEFINITIONS(-DBOOST_LOG_DYN_LINK)
