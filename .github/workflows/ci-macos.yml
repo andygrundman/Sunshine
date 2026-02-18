@@ -53,8 +53,7 @@ jobs:
             icu4c@78 \
             miniupnpc \
             openssl@3 \
-            opus \
-            llvm
+            opus
 
       - name: Configure formula
         env:
@@ -70,6 +69,19 @@ jobs:
 
           echo "scripts/macos_build.sh ${args[@]}"
           scripts/macos_build.sh "${args[@]}"
+
+      - name: Debug
+
+        run: |
+          echo "=== openssl include ==="
+          find /opt/homebrew/opt/openssl@3
+          find /opt/homebrew/include/openssl
+
+          ech "=== build.make ==="
+          cat build/CMakeFiles/sunshine.dir/build.make
+
+          echo "=== link.txt ==="
+          cat build/CMakeFiles/sunshine.dir/link.txt
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
