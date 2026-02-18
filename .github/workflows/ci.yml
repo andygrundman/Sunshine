@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - master
+      - andyg.macos-app-bundle
   workflow_dispatch:
 
 concurrency:
@@ -88,6 +89,16 @@ jobs:
     secrets:
       GH_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
       GIT_EMAIL: ${{ secrets.GH_BOT_EMAIL }}
+
+  build-macos:
+    name: macOS
+    needs: release-setup
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-macos.yml
+    with:
+      release_commit: ${{ needs.release-setup.outputs.release_commit }}
+      release_version: ${{ needs.release-setup.outputs.release_version }}
 
   build-linux:
     name: Linux
