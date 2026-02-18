@@ -40,6 +40,22 @@ jobs:
         with:
          submodules: recursive
 
+      - name: Setup Dependencies macOS
+        timeout-minutes: 5
+        run: |
+          # create the artifacts directory
+          mkdir -p artifacts
+
+          brew install \
+            cmake
+            node
+            pkgconf
+            icu4c@78
+            miniupnpc
+            openssl@3
+            opus
+            llvm
+
       - name: Configure formula
         env:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}

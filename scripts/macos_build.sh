@@ -164,7 +164,6 @@ function run_install() {
       run_step_dmg
       ;;
     all)
-      run_step_deps
       run_step_cmake
       run_step_build
       run_step_dmg
