@@ -4,6 +4,10 @@
 # boost, this should be before Simple-Web-Server as it also depends on boost
 include(dependencies/Boost_Sunshine)
 
+# Resolve OpenSSL before subprojects run their own find_package(OpenSSL) calls.
+# This ensures a user-provided OPENSSL_ROOT_DIR is honored consistently.
+find_package(OpenSSL REQUIRED)
+
 # submodules
 # moonlight common library
 set(ENET_NO_INSTALL ON CACHE BOOL "Don't install any libraries built for enet")
@@ -17,7 +21,6 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/libdisplaydevice")
 
 # common dependencies
 include("${CMAKE_MODULE_PATH}/dependencies/nlohmann_json.cmake")
-find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(CURL REQUIRED libcurl)
