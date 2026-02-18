@@ -59,7 +59,8 @@ jobs:
         env:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: |
-          args=(--skip-docs)
+          echo "=== cmake prep"
+          args=(--skip-docs --step=cmake)
 
           if [[ "${CODESIGN_IDENTITY}" == "" ]]; then
             args+=(--skip-codesign)
@@ -70,18 +71,25 @@ jobs:
           echo "scripts/macos_build.sh ${args[@]}"
           scripts/macos_build.sh "${args[@]}"
 
-      - name: Debug
-
-        run: |
           echo "=== openssl include ==="
           find /opt/homebrew/opt/openssl@3
           find /opt/homebrew/include/openssl
 
-          ech "=== build.make ==="
+          echo "=== build.make ==="
           cat build/CMakeFiles/sunshine.dir/build.make
 
           echo "=== link.txt ==="
           cat build/CMakeFiles/sunshine.dir/link.txt
+
+          echo "=== cmake build"
+          cmake --build build -j $(sysctl -n hw.ncpu)
+
+          echo "=== DMG packaging"
+          cpack -G DragNDrop --config "${build_dir}/CPackConfig.cmake" --verbose
+          if [[ -n "${CODESIGN_IDENTITY}" ]]; then
+            xcrun notarytool submit build/cpack_artifacts/Sunshine.dmg --keychain-profile "notarytool-password" --wait
+            xcrun stapler staple -v build/cpack_artifacts/Sunshine.dmg
+          fi
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
