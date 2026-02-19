@@ -95,6 +95,7 @@ function run_step_cmake() {
     "-DCMAKE_BUILD_TYPE=${build_type}"
     "-DBUILD_WERROR=ON"
     "-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3 2>/dev/null)"
+    "-DOPUS_ROOT_DIR=$(brew --prefix opus 2>/dev/null)"
     "-DSUNSHINE_BUILD_HOMEBREW=OFF"
     "-DSUNSHINE_ENABLE_TRAY=ON"
     "-DBUILD_DOCS=${build_docs}"
