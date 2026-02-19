@@ -32,6 +32,9 @@ include_directories(SYSTEM ${MINIUPNP_INCLUDE_DIRS})
 # ffmpeg pre-compiled binaries
 include("${CMAKE_MODULE_PATH}/dependencies/ffmpeg.cmake")
 
+# Opus
+include("${CMAKE_MODULE_PATH}/dependencies/FindOpus.cmake")
+
 # platform specific dependencies
 if(WIN32)
     include("${CMAKE_MODULE_PATH}/dependencies/windows.cmake")
