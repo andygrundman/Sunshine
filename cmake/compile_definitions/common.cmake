@@ -154,7 +154,7 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         enet
         libdisplaydevice::display_device
         nlohmann_json::nlohmann_json
-        opus
+        ${Opus_LIBRARY}
         ${FFMPEG_LIBRARIES}
         ${Boost_LIBRARIES}
         ${OPENSSL_LIBRARIES}
