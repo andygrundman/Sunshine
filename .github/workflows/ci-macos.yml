@@ -140,6 +140,10 @@ jobs:
           # build DMG
           cpack -G DragNDrop --config build/CPackConfig.cmake --verbose
 
+          # XXX sign inner libraries
+
+          # XXX sign .app
+
           # Notarizing allows the signed .app to run on any Mac with no prompts.
           # If you don't notarize, users must jump through the "Open Anyway" hoop as well as run
           # `xattr -cr /Applications/Sunshine.app` to remove quarantine.

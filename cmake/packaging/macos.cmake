@@ -44,60 +44,58 @@ install(CODE "
     # Remove Finder/resource-fork metadata that breaks codesign.
     execute_process(COMMAND /usr/bin/xattr -rc \"\${_app}\")
 
-    if(\"${CODESIGN_IDENTITY}\" STREQUAL \"\")
-        message(WARNING \"CODESIGN_IDENTITY not set; removing all signatures\")
-        execute_process(COMMAND /usr/bin/codesign
-            --remove-signature --force --deep
-            \"\${_app}\"
-            RESULT_VARIABLE rc2
-        )
-        if(NOT rc2 EQUAL 0)
-            message(FATAL_ERROR \"codesign failed for app\")
-        endif()
-        return()
-    endif()
-
-    # Sign anything inside Contents/Frameworks
-    KEYCHAIN_PATH=\"\${RUNNER_TEMP}/app-signing.keychain-db\"
-    set(_fw_dir \"\${_app}/Contents/Frameworks\")
-    if(EXISTS \"\${_fw_dir}\")
-        file(GLOB_RECURSE _sign_items
-            \"\${_fw_dir}/*.framework\"
-            \"\${_fw_dir}/*.dylib\"
-        )
-        foreach(item IN LISTS _sign_items)
-            execute_process(COMMAND /usr/bin/codesign
-                --force --timestamp --options runtime
-                --sign \"${CODESIGN_IDENTITY}\"
-                --keychain \"\${KEYCHAIN_PATH}\"
-                \"\${item}\"
-                RESULT_VARIABLE rc
-            )
-            if(NOT rc EQUAL 0)
-                message(FATAL_ERROR \"codesign failed for \${item}\")
-            endif()
-        endforeach()
-    endif()
-
-    # Sign the app last
+    message(STATUS \"removing any existing signatures\")
     execute_process(COMMAND /usr/bin/codesign
-        --force --timestamp --options runtime
-        --sign \"${CODESIGN_IDENTITY}\"
-        --keychain \"\${KEYCHAIN_PATH}\"
+        --remove-signature --force --deep
         \"\${_app}\"
-        RESULT_VARIABLE rc2
+        RESULT_VARIABLE rc
     )
-    if(NOT rc2 EQUAL 0)
+    if(NOT rc EQUAL 0)
         message(FATAL_ERROR \"codesign failed for app\")
     endif()
+    return()
 
-    # Verify
-    execute_process(COMMAND /usr/bin/codesign --verify --deep --strict --verbose=2 \"\${_app}\"
-        RESULT_VARIABLE rc3
-    )
-    if(NOT rc3 EQUAL 0)
-        message(FATAL_ERROR \"codesign verification failed\")
-    endif()
+    # # Sign anything inside Contents/Frameworks
+    # KEYCHAIN_PATH=\"\${RUNNER_TEMP}/app-signing.keychain-db\"
+    # set(_fw_dir \"\${_app}/Contents/Frameworks\")
+    # if(EXISTS \"\${_fw_dir}\")
+    #     file(GLOB_RECURSE _sign_items
+    #         \"\${_fw_dir}/*.framework\"
+    #         \"\${_fw_dir}/*.dylib\"
+    #     )
+    #     foreach(item IN LISTS _sign_items)
+    #         execute_process(COMMAND /usr/bin/codesign
+    #             --force --timestamp --options runtime
+    #             --sign \"${CODESIGN_IDENTITY}\"
+    #             --keychain \"\${KEYCHAIN_PATH}\"
+    #             \"\${item}\"
+    #             RESULT_VARIABLE rc
+    #         )
+    #         if(NOT rc EQUAL 0)
+    #             message(FATAL_ERROR \"codesign failed for \${item}\")
+    #         endif()
+    #     endforeach()
+    # endif()
+
+    # # Sign the app last
+    # execute_process(COMMAND /usr/bin/codesign
+    #     --force --timestamp --options runtime
+    #     --sign \"${CODESIGN_IDENTITY}\"
+    #     --keychain \"\${KEYCHAIN_PATH}\"
+    #     \"\${_app}\"
+    #     RESULT_VARIABLE rc2
+    # )
+    # if(NOT rc2 EQUAL 0)
+    #     message(FATAL_ERROR \"codesign failed for app\")
+    # endif()
+
+    # # Verify
+    # execute_process(COMMAND /usr/bin/codesign --verify --deep --strict --verbose=2 \"\${_app}\"
+    #     RESULT_VARIABLE rc3
+    # )
+    # if(NOT rc3 EQUAL 0)
+    #     message(FATAL_ERROR \"codesign verification failed\")
+    # endif()
 " COMPONENT Runtime)
 
 set(CPACK_GENERATOR "DragNDrop")
