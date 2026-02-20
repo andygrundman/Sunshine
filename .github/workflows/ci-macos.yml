@@ -43,9 +43,6 @@ jobs:
       - name: Setup Dependencies macOS
         timeout-minutes: 5
         run: |
-          # create the artifacts directory
-          mkdir -p artifacts
-
           brew install \
             cmake \
             node \
@@ -55,35 +52,95 @@ jobs:
             openssl@3 \
             opus
 
-      - name: Configure formula
+          # install gcvor
+          python -m pip install gcovr
+
+      - name: Configure
         env:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: |
-          echo "=== cmake prep"
-          args=(--skip-docs --step=cmake)
+          set -e
+          cd "${GITHUB_WORKSPACE}"
 
-          if [[ "${CODESIGN_IDENTITY}" == "" ]]; then
-            args+=(--skip-codesign)
-          else
-            args+=(--notarize)
-          fi
+          mkdir -p build
+          cmake \
+            -B build \
+            -S . \
+            -DBUILD_DOCS=OFF \
+            -DBUILD_TESTS=ON \
+            -DBUILD_WERROR=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3 2>/dev/null) \
+            -DOpus_ROOT_DIR=$(brew --prefix opus 2>/dev/null) \
+            -DSUNSHINE_BUILD_HOMEBREW=OFF \
+            -DSUNSHINE_ENABLE_TRAY=ON \
+            -DSUNSHINE_PUBLISHER_NAME="${GITHUB_REPOSITORY_OWNER}" \
+            -DSUNSHINE_PUBLISHER_WEBSITE="https://app.lizardbyte.dev" \
+            -DSUNSHINE_PUBLISHER_ISSUE_URL="https://app.lizardbyte.dev/support" \
+            -DSUNSHINE_BUNDLE_IDENTIFIER=dev.lizardbyte.sunshine \
+            -DCODESIGN_IDENTITY="${CODESIGN_IDENTITY}"
 
-          echo "scripts/macos_build.sh ${args[@]}"
-          scripts/macos_build.sh "${args[@]}"
+      - name: Build
+        run: |
+          set -e
+          cd "${GITHUB_WORKSPACE}"
 
-          echo "=== cmake build"
           cmake --build build -j $(sysctl -n hw.ncpu)
 
-          echo "=== DMG packaging"
+      - name: Package DMG
+        run: |
+          set -e
+          cd "${GITHUB_WORKSPACE}"
+
           cpack -G DragNDrop --config build/CPackConfig.cmake --verbose
           if [[ -n "${CODESIGN_IDENTITY}" ]]; then
             xcrun notarytool submit build/cpack_artifacts/Sunshine.dmg --keychain-profile "notarytool-password" --wait
             xcrun stapler staple -v build/cpack_artifacts/Sunshine.dmg
           fi
 
+          mkdir -p artifacts
+          mv build/cpack_artifacts/Sunshine.dmg \
+            artifacts/Sunshine-macOS-arm64.dmg
+
+      - name: Test
+        id: test
+        run: |
+          set -e
+          cd "${GITHUB_WORKSPACE}/build/tests"
+
+          ./test_sunshine --gtest_color=yes --gtest_output=xml:test_results.xml
+
+      - name: Generate gcov report
+        id: test_report
+        # any except canceled or skipped
+        if: >-
+          always() &&
+          (steps.test.outcome == 'success' || steps.test.outcome == 'failure')
+        run: |
+          cd "${GITHUB_WORKSPACE}/build"
+          python -m gcovr . -r ../src \
+            --exclude-noncode-lines \
+            --exclude-throw-branches \
+            --exclude-unreachable-branches \
+            --verbose \
+            --xml-pretty \
+            -o coverage.xml
+
+      - name: Upload coverage artifact
+        if: >-
+          always() &&
+          (steps.test_report.outcome == 'success')
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
+        with:
+          name: coverage-macOS-arm64
+          path: |
+            build/coverage.xml
+            build/tests/test_results.xml
+          if-no-files-found: error
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         with:
-          name: build-macOS
-          path: build/cpack_artifacts/Sunshine.dmg
+          name: build-macOS-arm64
+          path: artifacts/
           if-no-files-found: error
