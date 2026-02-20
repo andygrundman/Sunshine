@@ -71,21 +71,11 @@ jobs:
           echo "scripts/macos_build.sh ${args[@]}"
           scripts/macos_build.sh "${args[@]}"
 
-          echo "=== openssl include ==="
-          find /opt/homebrew/opt/openssl@3
-          find /opt/homebrew/include/openssl
-
-          echo "=== build.make ==="
-          cat build/CMakeFiles/sunshine.dir/build.make
-
-          echo "=== link.txt ==="
-          cat build/CMakeFiles/sunshine.dir/link.txt
-
           echo "=== cmake build"
           cmake --build build -j $(sysctl -n hw.ncpu)
 
           echo "=== DMG packaging"
-          cpack -G DragNDrop --config "${build_dir}/CPackConfig.cmake" --verbose
+          cpack -G DragNDrop --config build/CPackConfig.cmake --verbose
           if [[ -n "${CODESIGN_IDENTITY}" ]]; then
             xcrun notarytool submit build/cpack_artifacts/Sunshine.dmg --keychain-profile "notarytool-password" --wait
             xcrun stapler staple -v build/cpack_artifacts/Sunshine.dmg
