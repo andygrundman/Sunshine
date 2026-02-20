@@ -56,12 +56,10 @@ jobs:
           if [[ -n "${BUILD_CERTIFICATE_BASE64}" ]]; then
             # create variables
             CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-            PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
             KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
-            # import certificate and provisioning profile from secrets
+            # import certificate
             echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-            #echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
 
             # create temporary keychain
             security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
@@ -72,10 +70,6 @@ jobs:
             security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
             security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
             security list-keychain -d user -s $KEYCHAIN_PATH
-
-            # apply provisioning profile
-            #mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-            #cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
           fi
 
       - name: Install dependencies
@@ -186,3 +180,10 @@ jobs:
           name: build-macOS-arm64
           path: artifacts/
           if-no-files-found: error
+
+      - name: Clean up keychain and provisioning profile
+        if: >-
+          always()
+        run: |
+          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
+          rm -f ~/Library/MobileDevice/Provisioning\ Profiles/build_pp.provisionprofile
