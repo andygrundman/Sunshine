@@ -68,9 +68,9 @@ install(CODE "
                 --sign \"${CODESIGN_IDENTITY}\"
                 --keychain \"\${_keychain_path}\"
                 \"\${item}\"
-                RESULT_VARIABLE rc
+                RESULT_VARIABLE rc2
             )
-            if(NOT rc EQUAL 0)
+            if(NOT rc2 EQUAL 0)
                 message(FATAL_ERROR \"codesign failed for \${item}\")
             endif()
         endforeach()
@@ -82,17 +82,17 @@ install(CODE "
         --sign \"${CODESIGN_IDENTITY}\"
         --keychain \"\${_keychain_path}\"
         \"\${_app}\"
-        RESULT_VARIABLE rc2
+        RESULT_VARIABLE rc3
     )
-    if(NOT rc2 EQUAL 0)
+    if(NOT rc3 EQUAL 0)
         message(FATAL_ERROR \"codesign failed for app\")
     endif()
 
     # Verify
     execute_process(COMMAND /usr/bin/codesign --verify --deep --strict --verbose=2 \"\${_app}\"
-        RESULT_VARIABLE rc3
+        RESULT_VARIABLE rc4
     )
-    if(NOT rc3 EQUAL 0)
+    if(NOT rc4 EQUAL 0)
         message(FATAL_ERROR \"codesign verification failed\")
     endif()
 " COMPONENT Runtime)
