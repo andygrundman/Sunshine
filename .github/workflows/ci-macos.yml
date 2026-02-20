@@ -169,7 +169,7 @@ jobs:
           cd "${GITHUB_WORKSPACE}"
 
           # build DMG
-          cpack -G DragNDrop --config build/CPackConfig.cmake --verbose
+          cpack -G DragNDrop --config build/CPackConfig.cmake --verbose --trace
 
           # # sign inner libraries and then the .app
           # KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
