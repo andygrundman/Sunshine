@@ -58,6 +58,7 @@ install(CODE "
     endif()
 
     # Sign anything inside Contents/Frameworks
+    KEYCHAIN_PATH=\$RUNNER_TEMP/app-signing.keychain-db
     set(_fw_dir \"\${_app}/Contents/Frameworks\")
     if(EXISTS \"\${_fw_dir}\")
         file(GLOB_RECURSE _sign_items
@@ -68,6 +69,7 @@ install(CODE "
             execute_process(COMMAND /usr/bin/codesign
                 --force --timestamp --options runtime
                 --sign \"${CODESIGN_IDENTITY}\"
+                --keychain \"${KEYCHAIN_PATH}\"
                 \"\${item}\"
                 RESULT_VARIABLE rc
             )
@@ -81,6 +83,7 @@ install(CODE "
     execute_process(COMMAND /usr/bin/codesign
         --force --timestamp --options runtime
         --sign \"${CODESIGN_IDENTITY}\"
+        --keychain \"${KEYCHAIN_PATH}\"
         \"\${_app}\"
         RESULT_VARIABLE rc2
     )

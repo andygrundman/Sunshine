@@ -12,12 +12,17 @@ on:
         required: true
         type: string
     secrets:
+      # email address
       APPLE_ID:
         required: false
+      # 10-character Team ID
       APPLE_TEAM_ID:
         required: false
+      # app-specific password in APPLE_ID's account that must be named "notarytool"
+      # https://support.apple.com/en-us/102654
       APPLE_NOTARYTOOL_PASSWORD:
         required: false
+      # Long identity: Developer ID Application: Full Name (TEAMIDHERE)
       CODESIGN_IDENTITY:
         required: false
       DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64:
@@ -73,7 +78,7 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
           # import certificate to keychain
-          security import $CERTIFICATE_PATH -P "$DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P "$DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH >/dev/null
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
       - name: Install dependencies
