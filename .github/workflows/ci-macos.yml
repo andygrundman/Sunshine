@@ -133,6 +133,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_NOTARYTOOL_PASSWORD: ${{ secrets.APPLE_NOTARYTOOL_PASSWORD }}
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
         run: |
           set -e
           cd "${GITHUB_WORKSPACE}"
@@ -140,22 +141,44 @@ jobs:
           # build DMG
           cpack -G DragNDrop --config build/CPackConfig.cmake --verbose
 
-          # XXX sign inner libraries
+          # sign inner libraries and then the .app
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          if [[ -n "${CODESIGN_IDENTITY}" ]]; then
+            fw_dir="build/Sunshine.app/Contents/Frameworks"
+            if [[ -d "$fw_dir" ]]; then
+              mapfile -d '' sign_items < <(
+                {
+                  find "$fw_dir" -type d -name '*.framework' -print0
+                  find "$fw_dir" -type f -name '*.dylib' -print0
+                } 2>/dev/null
+              )
+              sign_items+=(build/Sunshine.app)
+              for item in "${sign_items[@]}"; do
+                /usr/bin/codesign \
+                  --force --timestamp --options runtime \
+                  --sign "${CODESIGN_IDENTITY}" \
+                  --keychain "${KEYCHAIN_PATH}" \
+                  "$item" || {
+                    echo "codesign failed for $item" >&2
+                    exit 1
+                  }
+              done
+            fi
 
-          # XXX sign .app
+            # verify
+            /usr/bin/codesign --verify --deep --strict --verbose=2 build/Sunshine.app
 
-          # Notarizing allows the signed .app to run on any Mac with no prompts.
-          # If you don't notarize, users must jump through the "Open Anyway" hoop as well as run
-          # `xattr -cr /Applications/Sunshine.app` to remove quarantine.
-          # https://eclecticlight.co/2020/11/19/getting-unnotarized-apps-out-of-quarantine/
-
-          if [[ -n "${APPLE_NOTARYTOOL_PASSWORD}" ]]; then
-            xcrun notarytool submit build/cpack_artifacts/Sunshine.dmg \
-              --apple-id "${APPLE_ID}" \
-              --team-id "${APPLE_TEAM_ID}" \
-              --password "${APPLE_NOTARYTOOL_PASSWORD}" \
-              --wait
-            xcrun stapler staple -v build/cpack_artifacts/Sunshine.dmg
+            # Notarizing allows the signed .app to run on any Mac with no prompts.
+            # If you don't notarize, users must jump through the "Open Anyway" hoop as well as run
+            # `xattr -cr /Applications/Sunshine.app` to remove quarantine.
+            if [[ -n "${APPLE_NOTARYTOOL_PASSWORD}" ]]; then
+              xcrun notarytool submit build/cpack_artifacts/Sunshine.dmg \
+                --apple-id "${APPLE_ID}" \
+                --team-id "${APPLE_TEAM_ID}" \
+                --password "${APPLE_NOTARYTOOL_PASSWORD}" \
+                --wait
+              xcrun stapler staple -v build/cpack_artifacts/Sunshine.dmg
+            fi
           fi
 
           mkdir -p artifacts
