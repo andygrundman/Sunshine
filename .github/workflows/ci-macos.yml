@@ -52,11 +52,6 @@ jobs:
           - os_name: "macos"
             os_version: "14"
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-         submodules: recursive
-
       # https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/sign-xcode-applications
       - name: Install Apple certificate
         env:
@@ -110,6 +105,11 @@ jobs:
             security find-identity -v -p codesigning "$KEYCHAIN_PATH"
             exit 1
           fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+         submodules: recursive
 
       - name: Install dependencies
         timeout-minutes: 5
