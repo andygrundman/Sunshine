@@ -53,7 +53,6 @@ install(CODE "
     if(NOT rc EQUAL 0)
         message(FATAL_ERROR \"codesign failed for app\")
     endif()
-    return()
 
     # Sign anything inside Contents/Frameworks
     set(_keychain_path \"\$ENV{RUNNER_TEMP}/app-signing.keychain-db\")
