@@ -64,10 +64,8 @@ install(CODE "
         )
         foreach(item IN LISTS _sign_items)
             execute_process(COMMAND /usr/bin/codesign --verbose=2
-                --force --timestamp --options runtime
                 --sign \"${CODESIGN_IDENTITY}\"
-                --keychain \"${_keychain_path}\"
-                \"\${item}\"
+                --force --timestamp --options runtime \"\${item}\"
                 RESULT_VARIABLE rc2
             )
             if(NOT rc2 EQUAL 0)
@@ -78,10 +76,8 @@ install(CODE "
 
     # Sign the app last
     execute_process(COMMAND /usr/bin/codesign --verbose=2
-        --force --timestamp --options runtime
         --sign \"${CODESIGN_IDENTITY}\"
-        --keychain \"${_keychain_path}\"
-        \"\${_app}\"
+        --force --timestamp --options runtime \"\${_app}\"
         RESULT_VARIABLE rc3
     )
     if(NOT rc3 EQUAL 0)
