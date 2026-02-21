@@ -63,10 +63,10 @@ install(CODE "
             \"\${_fw_dir}/*.dylib\"
         )
         foreach(item IN LISTS _sign_items)
-            execute_process(COMMAND /usr/bin/codesign
+            execute_process(COMMAND /usr/bin/codesign --verbose=2
                 --force --timestamp --options runtime
                 --sign \"${CODESIGN_IDENTITY}\"
-                --keychain \"\${_keychain_path}\"
+                --keychain \"${_keychain_path}\"
                 \"\${item}\"
                 RESULT_VARIABLE rc2
             )
@@ -77,10 +77,10 @@ install(CODE "
     endif()
 
     # Sign the app last
-    execute_process(COMMAND /usr/bin/codesign
+    execute_process(COMMAND /usr/bin/codesign --verbose=2
         --force --timestamp --options runtime
         --sign \"${CODESIGN_IDENTITY}\"
-        --keychain \"\${_keychain_path}\"
+        --keychain \"${_keychain_path}\"
         \"\${_app}\"
         RESULT_VARIABLE rc3
     )
