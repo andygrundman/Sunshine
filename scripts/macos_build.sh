@@ -15,12 +15,12 @@ build_type="Release"
 sign_app="true"
 
 # environment variables
-#BUILD_VERSION=""
+# BUILD_VERSION should be empty or cmake will assume a CI build
+BUILD_VERSION=""
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 COMMIT=$(git rev-parse --short HEAD)
 
-# v2026.206.151412
-#export BUILD_VERSION
+export BUILD_VERSION
 export BRANCH
 export COMMIT
 
@@ -100,7 +100,6 @@ function run_step_cmake() {
     "-DOpus_ROOT_DIR=$(brew --prefix opus 2>/dev/null)"
     "-DSUNSHINE_BUILD_HOMEBREW=OFF"
     "-DSUNSHINE_ENABLE_TRAY=ON"
-    "-DSUNSHINE_BUNDLE_IDENTIFIER=dev.lizardbyte.sunshine"
   )
 
   if [[ -n "${sign_app}" ]]; then

@@ -1,7 +1,7 @@
 # common target definitions
 # this file will also load platform specific macros
 
-if(APPLE)
+if(APPLE AND NOT SUNSHINE_BUILD_HOMEBREW)
     add_executable(sunshine MACOSX_BUNDLE ${SUNSHINE_TARGET_FILES})
 else()
     add_executable(sunshine ${SUNSHINE_TARGET_FILES})
@@ -31,7 +31,7 @@ endif()
 
 target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
-if(APPLE)
+if(APPLE AND NOT SUNSHINE_BUILD_HOMEBREW)
     # codesign on Mac won't sign an .app that uses a symlink
     set_target_properties(sunshine PROPERTIES CXX_STANDARD 23)
 else()

@@ -98,7 +98,6 @@ jobs:
             -DSUNSHINE_PUBLISHER_NAME="${GITHUB_REPOSITORY_OWNER}" \
             -DSUNSHINE_PUBLISHER_WEBSITE="https://app.lizardbyte.dev" \
             -DSUNSHINE_PUBLISHER_ISSUE_URL="https://app.lizardbyte.dev/support" \
-            -DSUNSHINE_BUNDLE_IDENTIFIER=dev.lizardbyte.sunshine \
             -DCODESIGN_IDENTITY="${CODESIGN_IDENTITY}"
 
       - name: Build
@@ -118,7 +117,15 @@ jobs:
           export SHOULD_SIGN
 
           # build DMG and sign everything (see cmake/packaging/macos.cmake)
-          cpack -G DragNDrop --config build/CPackConfig.cmake --verbose
+          # cpack can rarely fail with "hdiutil: create failed - Resource busy"
+          # so let's allow 1 retry
+          if ! cpack -G DragNDrop --config build/CPackConfig.cmake; then
+            echo "cpack failed, retrying once with verbose..."
+            if ! cpack -G DragNDrop --config build/CPackConfig.cmake --verbose; then
+              echo "cpack failed again. Aborting."
+              exit 1
+            fi
+          fi
 
           # Notarize
           if [[ $SHOULD_SIGN == 1 && -n "${APPLE_NOTARYTOOL_PASSWORD}" ]]; then
