@@ -57,7 +57,7 @@ jobs:
     steps:
       - name: Install Apple certificate
         uses: apple-actions/import-codesign-certs@b610f78488812c1e56b20e6df63ec42d833f2d14  # v6.0.0
-        if: github.event_name == 'push'
+        if: inputs.publish_release == 'true'
         with:
           p12-file-base64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
           p12-password: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD }}
