@@ -263,7 +263,18 @@ namespace platf::dxgi {
       return capture_status;
     }
 
-    auto frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), frame_qpc);
+    // we intentionally don't include capture time because it has never been reported correctly
+    auto frame_timestamp = std::chrono::steady_clock::now();
+
+    // This will log the real capture time stats every 5 seconds
+    {
+      static logging::min_max_avg_periodic_logger<double> capture_latency_logger(debug, "Capture latency", "ms", std::chrono::seconds(5));
+      const auto capture_delay_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        qpc_time_difference(qpc_counter(), frame_qpc)
+      ).count();
+      capture_latency_logger.collect_and_log((double)capture_delay_us / 1000.0);
+    }
+
     D3D11_TEXTURE2D_DESC desc;
     src->GetDesc(&desc);
 

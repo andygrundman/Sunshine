@@ -190,8 +190,17 @@ namespace platf::dxgi {
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
     if (auto qpc_displayed = std::max(frame_info.LastPresentTime.QuadPart, frame_info.LastMouseUpdateTime.QuadPart)) {
-      // Translate QueryPerformanceCounter() value to steady_clock time point
-      frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
+      // we intentionally don't include capture time because it has never been reported correctly
+      frame_timestamp = std::chrono::steady_clock::now();
+
+      // This will log the real capture delay stats every 5 seconds
+      {
+        static logging::min_max_avg_periodic_logger<double> capture_latency_logger(debug, "Capture latency", "ms", std::chrono::seconds(5));
+        const auto capture_delay_us = std::chrono::duration_cast<std::chrono::microseconds>(
+          qpc_time_difference(qpc_counter(), qpc_displayed)
+        ).count();
+        capture_latency_logger.collect_and_log((double)capture_delay_us / 1000.0);
+      }
     }
 
     if (frame_info.PointerShapeBufferSize > 0) {

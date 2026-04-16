@@ -1700,7 +1700,9 @@ namespace platf {
     };
     static const double frequency = get_frequency();
     if (frequency) {
-      return std::chrono::nanoseconds((int64_t) ((performance_counter1 - performance_counter2) * frequency / std::nano::den));
+      const int64_t ticks = performance_counter1 - performance_counter2;
+      const int64_t ns = static_cast<int64_t>((static_cast<long double>(ticks) * std::nano::den) / frequency);
+      return std::chrono::nanoseconds(ns);
     }
     return {};
   }
