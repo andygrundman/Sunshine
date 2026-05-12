@@ -1700,9 +1700,17 @@ namespace video {
       // B-frames delay decoder output, so never use them
       ctx->max_b_frames = 0;
 
+      // Special case for Xbox clients with an AMD encoder. hevc_amf doesn't support
+      // any intra_refresh options, treat it the same as a FIXED_GOP_SIZE encoder.
+      bool forceFixedGOP = false;
+      if (config.enableIntraRefresh == 1 && encoder.name == "hevc_amf"sv) {
+        BOOST_LOG(info) << "Client requested unsupported intra-refresh with hevc_amf, falling back to fixed gop_size.";
+        forceFixedGOP = true;
+      }
+
       // Use an infinite GOP length since I-frames are generated on demand
       // Exception: encoders with FIXED_GOP_SIZE flag don't support on-demand IDR
-      if (encoder.flags & FIXED_GOP_SIZE) {
+      if (encoder.flags & FIXED_GOP_SIZE || forceFixedGOP) {
         // Fixed GOP for encoders that don't support on-demand IDR (e.g. Media Foundation)
         ctx->gop_size = 120;  // ~2 seconds at 60 FPS - larger to reduce oversized IDR frame frequency
         ctx->keyint_min = 120;
