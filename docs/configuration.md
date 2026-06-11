@@ -2986,40 +2986,45 @@ supported on the current platform.
 
 ## VideoToolbox Encoder
 
-### vt_coder
+### add keyframe interval, expand this to all backends
+### speed over quality
+
+### vt_keyframe_interval
+
+
+
+### vt_hpl_means_encode
 
 <table>
     <tr>
         <td>Description</td>
         <td colspan="2">
-            The entropy encoding to use.
-            @note{This option only applies when using macOS.}
+            The Host Processing Latency value reported to Moonlight shows the time
+            it takes for VideoToolbox to encode one frame, and matches how the field
+            works on other platforms. Disable this setting to also include the time needed
+            to capture the frame.
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            auto
+            true
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            vt_coder = auto
+            vt_hpl_means_encode = true
             @endcode</td>
     </tr>
     <tr>
-        <td rowspan="3">Choices</td>
-        <td>auto</td>
-        <td>let ffmpeg decide</td>
+        <td rowspan="4">Choices</td>
+        <td>true</td>
+        <td>HPL reports the encoding time.</td>
     </tr>
     <tr>
-        <td>cabac</td>
-        <td>context adaptive binary arithmetic coding - faster decode</td>
-    </tr>
-    <tr>
-        <td>cavlc</td>
-        <td>context adaptive variable-length coding - higher quality</td>
+        <td>false</td>
+        <td>HPL reports the capture + encoding time.</td>
     </tr>
 </table>
 
@@ -3061,31 +3066,6 @@ supported on the current platform.
     <tr>
         <td>forced</td>
         <td>force software encoding</td>
-    </tr>
-</table>
-
-### vt_realtime
-
-<table>
-    <tr>
-        <td>Description</td>
-        <td colspan="2">
-            Realtime encoding.
-            @note{This option only applies when using macOS.}
-            @warning{Disabling realtime encoding might result in a delayed frame encoding or frame drop.}
-        </td>
-    </tr>
-    <tr>
-        <td>Default</td>
-        <td colspan="2">@code{}
-            enabled
-            @endcode</td>
-    </tr>
-    <tr>
-        <td>Example</td>
-        <td colspan="2">@code{}
-            vt_realtime = enabled
-            @endcode</td>
     </tr>
 </table>
 

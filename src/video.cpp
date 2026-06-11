@@ -8,6 +8,7 @@
 #include <atomic>
 #include <bitset>
 #include <list>
+#include <map>
 #include <thread>
 #include <utility>
 
@@ -40,6 +41,11 @@ extern "C" {
 extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
+#endif
+
+#ifdef __APPLE__
+  #include "platform/macos/videotoolbox.h"
+  #include "src/platform/macos/qpc_chrono.h"
 #endif
 
 using namespace std::literals;
@@ -96,6 +102,11 @@ namespace video {
    */
   void free_buffer(AVBufferRef *ref) {
     av_buffer_unref(&ref);
+  }
+
+  std::chrono::steady_clock::time_point video_epoch() {
+    static const auto epoch = std::chrono::steady_clock::now();
+    return epoch;
   }
 
   namespace nv {
@@ -476,6 +487,7 @@ namespace video {
       replacements = std::move(other.replacements);
       sps = std::move(other.sps);
       vps = std::move(other.vps);
+      pending_frame_timestamps = std::move(other.pending_frame_timestamps);
 
       inject = other.inject;
 
@@ -538,6 +550,12 @@ namespace video {
 
     // inject sps/vps data into idr pictures
     int inject;  ///< Number of upcoming IDR frames that should receive rewritten parameter sets.
+
+    // The encoder may be pipelined: a packet returned by avcodec_receive_packet() corresponds to an
+    // earlier submitted frame, not the one just sent. Map each frame's pts (== frame_nr) to its
+    // capture timestamp on submit, then look it up by the output packet's pts so the timestamp
+    // follows the correct frame through the pipeline.
+    std::map<int64_t, std::optional<std::chrono::steady_clock::time_point>> pending_frame_timestamps;
   };
 
   /**
@@ -1374,42 +1392,16 @@ namespace video {
    */
   encoder_t videotoolbox {
     "videotoolbox"sv,
-    std::make_unique<encoder_platform_formats_avcodec>(
-      AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
-      AV_HWDEVICE_TYPE_NONE,
-      AV_PIX_FMT_VIDEOTOOLBOX,
-      AV_PIX_FMT_NV12,
-      AV_PIX_FMT_P010,
-      AV_PIX_FMT_NONE,
-      AV_PIX_FMT_NONE,
-      vt_init_avcodec_hardware_input_buffer
+    std::make_unique<encoder_platform_formats_videotoolbox>(
+      platf::mem_type_e::videotoolbox,
+      platf::pix_fmt_e::nv12,
+      platf::pix_fmt_e::p010,
+      platf::pix_fmt_e::nv24,
+      platf::pix_fmt_e::p410
     ),
+    {}, // no av1 encode yet
     {
-      // Common options
-      {
-        {"allow_sw"s, &config::video.vt.vt_allow_sw},
-        {"require_sw"s, &config::video.vt.vt_require_sw},
-        {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
-        {"max_ref_frames"s, 1},
-      },
-      {},  // SDR-specific options
-      {},  // HDR-specific options
-      {},  // YUV444 SDR-specific options
-      {},  // YUV444 HDR-specific options
-      {},  // Fallback options
-      "av1_videotoolbox"s,
-      {},  // capabilities
-    },
-    {
-      // Common options
-      {
-        {"allow_sw"s, &config::video.vt.vt_allow_sw},
-        {"require_sw"s, &config::video.vt.vt_require_sw},
-        {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
-        {"max_ref_frames"s, 1},
-      },
+      {},  // Common options
       {},  // SDR-specific options
       {},  // HDR-specific options
       {},  // YUV444 SDR-specific options
@@ -1419,30 +1411,16 @@ namespace video {
       {},  // capabilities
     },
     {
-      // Common options
-      // Note: max_ref_frames is intentionally omitted for H.264 because
-      // VideoToolbox on Apple Silicon produces all-IDR output when
-      // ReferenceBufferCount=1 is set for H.264, causing massive bandwidth
-      // inflation (~3x) and frame drops. HEVC and AV1 are unaffected and
-      // retain max_ref_frames=1. See LizardByte/Sunshine#5013.
-      {
-        {"allow_sw"s, &config::video.vt.vt_allow_sw},
-        {"require_sw"s, &config::video.vt.vt_require_sw},
-        {"realtime"s, &config::video.vt.vt_realtime},
-        {"prio_speed"s, 1},
-      },
+      {},  // Common options
       {},  // SDR-specific options
       {},  // HDR-specific options
       {},  // YUV444 SDR-specific options
       {},  // YUV444 HDR-specific options
-      {
-        // Fallback options
-        {"flags"s, "-low_delay"},
-      },
+      {},  // Fallback options
       "h264_videotoolbox"s,
       {},  // capabilities
     },
-    PARALLEL_ENCODING
+    PARALLEL_ENCODING | YUV444_SUPPORT
   };
 #endif
 
@@ -1650,12 +1628,17 @@ namespace video {
       }
     };
 
+    static int pf_reused = 0;
+    static int pf_alloc = 0;
+    static int pf_sleeps = 0;
+
     auto pull_free_image_callback = [&](std::shared_ptr<platf::img_t> &img_out) -> bool {
       img_out.reset();
       while (capture_ctx_queue->running()) {
         // pick first allocated but unused
         for (auto it = imgs.begin(); it != imgs.end(); it++) {
           if (*it && it->use_count() == 1) {
+            ++pf_reused;
             img_out = *it;
             if (it != imgs.begin()) {
               // move image to the front of the list to prioritize its reusal
@@ -1670,6 +1653,7 @@ namespace video {
           for (auto it = imgs.begin(); it != imgs.end(); it++) {
             if (!*it) {
               // allocate image
+              ++pf_alloc;
               *it = disp->alloc_img();
               img_out = *it;
               if (it != imgs.begin()) {
@@ -1685,10 +1669,14 @@ namespace video {
           // trim allocated but unused portion of the pool based on timeouts
           trim_imgs();
           img_out->frame_timestamp.reset();
+          img_out->capture_pacing_timestamp.reset();
+          if (pf_reused % 20 == 0)
+            BOOST_LOG(debug) << "pull_free alloc/reused/sleeps " << pf_alloc << "/" << pf_reused << "/" << pf_sleeps;
           return true;
         } else {
           // sleep and retry if image pool is full
           std::this_thread::sleep_for(1ms);
+          ++pf_sleeps;
         }
       }
       return false;
@@ -1832,6 +1820,10 @@ namespace video {
     auto &sps = session.sps;
     auto &vps = session.vps;
 
+    // Remember this frame's capture timestamp so it can be paired with the matching output packet
+    // once it emerges from the encoder pipeline (see lookup by av_packet->pts below).
+    session.pending_frame_timestamps[frame_nr] = frame_timestamp;
+
     // send the frame to the encoder
     auto ret = avcodec_send_frame(ctx.get(), frame);
     if (ret < 0) {
@@ -1885,8 +1877,14 @@ namespace video {
         );
       }
 
-      if (av_packet && av_packet->pts == frame_nr) {
-        packet->frame_timestamp = frame_timestamp;
+      // Pair this packet with the capture timestamp of the frame it was actually produced from,
+      // identified by pts. The encoder pipeline means this is an earlier frame than the one just
+      // submitted, so using the passed-in frame_timestamp directly would understate latency.
+      auto &pending = session.pending_frame_timestamps;
+      if (auto it = pending.find(av_packet->pts); it != pending.end()) {
+        packet->frame_timestamp = it->second;
+        // Packets are emitted in order (no B-frames), so this and any older entries are done.
+        pending.erase(pending.begin(), std::next(it));
       }
 
       packet->replacements = &session.replacements;
@@ -1927,22 +1925,33 @@ namespace video {
     return 0;
   }
 
-  /**
-   * @brief Encode one captured frame and queue packets for transmission.
-   *
-   * @param frame_nr Frame nr.
-   * @param session Active streaming or pairing session for the request.
-   * @param packets Packets queued or emitted by the stream.
-   * @param channel_data Channel data.
-   * @param frame_timestamp Frame timestamp.
-   * @return 0 when the frame is encoded and queued; nonzero on encoder failure.
-   */
+#ifdef __APPLE__
+  int encode_videotoolbox(int64_t frame_nr, videotoolbox_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> capture_pacing_timestamp) {
+    std::optional<std::chrono::steady_clock::time_point> now = std::chrono::steady_clock::now();
+    std::unique_ptr<vt::frame_ref_t> frame_ref {new vt::frame_ref_t {
+      packets,
+      channel_data,
+      frame_nr,
+      QpcNow(), // encode_start_qpc
+      capture_pacing_timestamp,
+      now, // frame_timestamp
+    }};
+
+    return session.encode_frame(std::move(frame_ref));
+  }
+#endif
+
   int encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
       return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
     } else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
       return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
     }
+#ifdef __APPLE__
+    else if (auto videotoolbox_session = dynamic_cast<videotoolbox_encode_session_t *>(&session)) {
+      return encode_videotoolbox(frame_nr, *videotoolbox_session, packets, channel_data, frame_timestamp);
+    }
+#endif
 
     return -1;
   }
@@ -2361,6 +2370,17 @@ namespace video {
     return std::make_unique<nvenc_encode_session_t>(std::move(encode_device));
   }
 
+#ifdef __APPLE__
+  std::unique_ptr<videotoolbox_encode_session_t> make_videotoolbox_encode_session(const config_t &client_config, std::unique_ptr<platf::videotoolbox_encode_device_t> encode_device) {
+    auto session = std::make_unique<videotoolbox_encode_session_t>(client_config, std::move(encode_device));
+    if (!session->init_encoder()) {
+      return nullptr;
+    }
+
+    return session;
+  }
+#endif
+
   /**
    * @brief Create encode session.
    *
@@ -2380,6 +2400,12 @@ namespace video {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
       return make_nvenc_encode_session(config, std::move(nvenc_encode_device));
     }
+#ifdef __APPLE__
+    else if (dynamic_cast<platf::videotoolbox_encode_device_t *>(encode_device.get())) {
+      auto videotoolbox_encode_device = boost::dynamic_pointer_cast<platf::videotoolbox_encode_device_t>(std::move(encode_device));
+      return make_videotoolbox_encode_session(config, std::move(videotoolbox_encode_device));
+    }
+#endif
 
     return nullptr;
   }
@@ -2615,6 +2641,8 @@ namespace video {
       result = disp.make_avcodec_encode_device(pix_fmt);
     } else if (dynamic_cast<const encoder_platform_formats_nvenc *>(encoder.platform_formats.get())) {
       result = disp.make_nvenc_encode_device(pix_fmt);
+    } else if (dynamic_cast<const encoder_platform_formats_videotoolbox *>(encoder.platform_formats.get())) {
+      result = disp.make_videotoolbox_encode_device(pix_fmt);
     }
 
     if (result) {
@@ -2816,6 +2844,7 @@ namespace video {
       auto pull_free_image_callback = [&img](std::shared_ptr<platf::img_t> &img_out) -> bool {
         img_out = img;
         img_out->frame_timestamp.reset();
+        img_out->capture_pacing_timestamp.reset();
         return true;
       };
 
@@ -3737,6 +3766,10 @@ namespace video {
         return platf::pix_fmt_e::yuv444p;
       case AV_PIX_FMT_YUV444P16:
         return platf::pix_fmt_e::yuv444p16;
+      case AV_PIX_FMT_NV24:
+        return platf::pix_fmt_e::nv24;
+      case AV_PIX_FMT_P410:
+        return platf::pix_fmt_e::p410;
       default:
         return platf::pix_fmt_e::unknown;
     }

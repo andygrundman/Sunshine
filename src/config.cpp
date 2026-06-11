@@ -522,6 +522,18 @@ namespace config {
       return -1;
     }
 
+    int preset_from_view(const std::string_view &preset) {
+#define _CONVERT_(x, y) \
+  if (preset == #x##sv) \
+  return y
+      _CONVERT_(VideoConferencing, 1);
+      _CONVERT_(HighSpeed, 2);
+      _CONVERT_(Balanced, 3);
+      _CONVERT_(HighQuality, 4);
+#undef _CONVERT_
+      return 1; // default
+    }
+
     /**
      * @brief Parse whether VideoToolbox software encoding is allowed.
      *
@@ -757,10 +769,9 @@ namespace config {
     },  // amd
 
     {
-      0,
-      0,
-      1,
-      -1,
+      true, // vt_hpl_means_encode
+      0, // vt_allow_sw
+      0, // vt_require_sw
     },  // vt
 
     {
@@ -1674,10 +1685,9 @@ namespace config {
       }
     }
 
-    int_f(vars, "vt_coder", video.vt.vt_coder, vt::coder_from_view);
+    bool_f(vars, "vt_hpl_means_encode", (bool &) video.vt.vt_hpl_means_encode);
     int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
     int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
-    int_f(vars, "vt_realtime", video.vt.vt_realtime, vt::rt_from_view);
 
     std::string vaapi_quality;
     string_f(vars, "vaapi_quality", vaapi_quality);
