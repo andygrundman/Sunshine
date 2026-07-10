@@ -712,6 +712,13 @@ function run_step_cmake() {
     cmake_args+=("-DSUNSHINE_BUILD_APPIMAGE=ON")
   fi
 
+  # Fork extension: allow callers (CI) to append extra cmake args, e.g.
+  # SUNSHINE_EXTRA_CMAKE_ARGS="-DSUNSHINE_ENABLE_PYROWAVE=ON"
+  if [[ -n "$SUNSHINE_EXTRA_CMAKE_ARGS" ]]; then
+    read -ra _extra_cmake_args <<< "$SUNSHINE_EXTRA_CMAKE_ARGS"
+    cmake_args+=("${_extra_cmake_args[@]}")
+  fi
+
   # Publisher metadata
   if [[ -n "$publisher_name" ]]; then
     cmake_args+=("-DSUNSHINE_PUBLISHER_NAME='${publisher_name}'")

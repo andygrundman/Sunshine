@@ -1,0 +1,143 @@
+---
+# Fork workflow: build a PyroWave-enabled Sunshine AppImage.
+# Standalone reduction of upstream's ci-linux.yml AppImage job (which is wired into
+# LizardByte's release orchestration via workflow_call and can't run directly on a fork).
+name: Build AppImage (PyroWave)
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - pyrowave-codec
+  workflow_dispatch:
+
+concurrency:
+  group: appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    env:
+      APP_ID: dev.lizardbyte.app.Sunshine
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set version
+        run: echo "VERSION=$(echo ${GITHUB_SHA} | cut -c1-8)" >> "${GITHUB_ENV}"
+
+      - name: Setup Dependencies Linux
+        timeout-minutes: 5
+        run: |
+          # create the artifacts directory
+          mkdir -p artifacts
+
+          # allow libfuse2 for appimage on 22.04+
+          sudo add-apt-repository universe
+
+          sudo apt-get install -y \
+            libdrm-dev \
+            libfuse2 \
+            libgl-dev \
+            libvulkan-dev \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxcb-dri3-dev \
+            libxfixes-dev \
+            ninja-build
+
+      - name: Build latest libva
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        timeout-minutes: 5
+        run: |
+          gh release download --archive=tar.gz --repo=intel/libva
+          tar xzf libva-*.tar.gz && rm libva-*.tar.gz
+          cd libva-*
+          ./autogen.sh --prefix=/usr --libdir=/usr/lib/x86_64-linux-gnu \
+            --enable-drm \
+            --enable-x11 \
+            --enable-glx \
+            --enable-wayland \
+            --without-legacy
+          make -j "$(nproc)"
+          sudo make install
+          cd .. && rm -rf libva-*
+
+      - name: Build PyroWave
+        working-directory: third-party/pyrowave
+        run: |
+          ./checkout_granite.sh
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Build Linux
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          BUILD_VERSION: ${{ env.VERSION }}
+          COMMIT: ${{ github.sha }}
+          SUNSHINE_EXTRA_CMAKE_ARGS: "-DSUNSHINE_ENABLE_PYROWAVE=ON"
+        run: |
+          chmod +x ./scripts/linux_build.sh
+          echo "::add-matcher::.github/matchers/gcc.json"
+          ./scripts/linux_build.sh \
+            --publisher-name="${GITHUB_REPOSITORY_OWNER}" \
+            --skip-cleanup \
+            --skip-cuda \
+            --skip-package \
+            --appimage-build
+          echo "::remove-matcher owner=gcc::"
+
+      - name: Package Linux - AppImage
+        working-directory: build
+        run: |
+          # install sunshine to the DESTDIR
+          DESTDIR=AppDir ninja install
+
+          # custom AppRun file
+          cp -f ../packaging/linux/AppImage/AppRun ./AppDir/
+          chmod +x ./AppDir/AppRun
+
+          # variables
+          DESKTOP_FILE="${DESKTOP_FILE:-${APP_ID}.desktop}"
+          ICON_FILE="${ICON_FILE:-sunshine.png}"
+          LINUXDEPLOY_GH="https://github.com/linuxdeploy/linuxdeploy"
+
+          # AppImage
+          # https://docs.appimage.org/packaging-guide/index.html
+          wget -q "${LINUXDEPLOY_GH}/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          chmod +x linuxdeploy-x86_64.AppImage
+
+          # https://github.com/linuxdeploy/linuxdeploy-plugin-qt
+          wget -q "${LINUXDEPLOY_GH}-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
+          chmod +x linuxdeploy-plugin-qt-x86_64.AppImage
+          export QMAKE=/usr/lib/qt6/bin/qmake
+          export EXTRA_QT_MODULES="svg;"
+          "$QMAKE" -query QT_INSTALL_PLUGINS
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir ./AppDir \
+            --plugin qt \
+            --executable ./sunshine \
+            --library ../third-party/pyrowave/build/libpyrowave-shared.so.0 \
+            --icon-file "../$ICON_FILE" \
+            --desktop-file "./$DESKTOP_FILE" \
+            --output appimage
+
+          # move
+          mv Sunshine*.AppImage ../artifacts/sunshine.AppImage
+
+          # permissions
+          chmod +x ../artifacts/sunshine.AppImage
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sunshine-appimage-pyrowave-${{ env.VERSION }}
+          path: artifacts/sunshine.AppImage
+          compression-level: 0
+          if-no-files-found: error
