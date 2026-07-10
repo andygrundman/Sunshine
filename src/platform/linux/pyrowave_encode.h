@@ -53,9 +53,10 @@ namespace platf::pyrowave {
      * @param height Encoded luma height (made even for 4:2:0).
      * @param bitrate_kbps Negotiated target bitrate in kbps, mapped to a per-frame byte budget.
      * @param frame_rate Frames per second, used with the bitrate to size the per-frame budget.
+     * @param yuv444 True for 4:4:4 chroma (full-resolution Cb/Cr), false for 4:2:0.
      * @return Session on success, nullptr on failure.
      */
-    static std::unique_ptr<encoder_t> create(int width, int height, int bitrate_kbps, int frame_rate);
+    static std::unique_ptr<encoder_t> create(int width, int height, int bitrate_kbps, int frame_rate, bool yuv444);
 
     /**
      * @brief Encode one captured frame into a PyroWave bitstream.

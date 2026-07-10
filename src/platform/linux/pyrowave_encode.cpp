@@ -255,6 +255,7 @@ namespace platf::pyrowave {
     pyrowave_encoder enc = nullptr;
     int width = 0;
     int height = 0;
+    bool yuv444 = false;
     size_t max_bitstream = 0;
 
     // GPU encode resources on PyroWave's own VkDevice (Stage B).
@@ -287,6 +288,7 @@ namespace platf::pyrowave {
       int32_t scaled[2];
       int32_t offset[2];
       int32_t flip;
+      int32_t chroma444;
     };
 
     ~impl_t() {
@@ -361,9 +363,11 @@ namespace platf::pyrowave {
         return false;
       }
 
+      int chroma_w = yuv444 ? width : width / 2;
+      int chroma_h = yuv444 ? height : height / 2;
       if (!plane_y.init(vk_dev, vk_phys, width, height) ||
-          !plane_cb.init(vk_dev, vk_phys, width / 2, height / 2) ||
-          !plane_cr.init(vk_dev, vk_phys, width / 2, height / 2)) {
+          !plane_cb.init(vk_dev, vk_phys, chroma_w, chroma_h) ||
+          !plane_cr.init(vk_dev, vk_phys, chroma_w, chroma_h)) {
         return false;
       }
 
@@ -594,6 +598,7 @@ namespace platf::pyrowave {
       pc.offset[0] = ((width - pc.scaled[0]) / 2) & ~1;
       pc.offset[1] = ((height - pc.scaled[1]) / 2) & ~1;
       pc.flip = desc.y_invert ? 1 : 0;
+      pc.chroma444 = yuv444 ? 1 : 0;
 
       vkResetCommandBuffer(vk_cmd, 0);
       VkCommandBufferBeginInfo beg {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -649,8 +654,8 @@ namespace platf::pyrowave {
     }
   };
 
-  std::unique_ptr<encoder_t> encoder_t::create(int width, int height, int bitrate_kbps, int frame_rate) {
-    // 4:2:0 requires even dimensions.
+  std::unique_ptr<encoder_t> encoder_t::create(int width, int height, int bitrate_kbps, int frame_rate, bool yuv444) {
+    // 4:2:0 requires even dimensions (harmless for 4:4:4; keeps the letterbox math shared).
     width &= ~1;
     height &= ~1;
     if (width <= 0 || height <= 0) {
@@ -663,6 +668,7 @@ namespace platf::pyrowave {
 
     impl.width = width;
     impl.height = height;
+    impl.yuv444 = yuv444;
 
     // Per-frame byte budget from bitrate. Intra-only: bitrate / fps bytes per frame.
     if (frame_rate <= 0) {
@@ -687,7 +693,7 @@ namespace platf::pyrowave {
     eci.device = impl.pdev;
     eci.width = width;
     eci.height = height;
-    eci.chroma = PYROWAVE_CHROMA_SUBSAMPLING_420;
+    eci.chroma = yuv444 ? PYROWAVE_CHROMA_SUBSAMPLING_444 : PYROWAVE_CHROMA_SUBSAMPLING_420;
     if (pyrowave_encoder_create(&eci, &impl.enc) != PYROWAVE_SUCCESS) {
       BOOST_LOG(error) << "PyroWave: pyrowave_encoder_create failed";
       return nullptr;
@@ -699,6 +705,7 @@ namespace platf::pyrowave {
     }
 
     BOOST_LOG(info) << "PyroWave encoder ready (GPU): " << width << "x" << height
+                    << (yuv444 ? " 4:4:4" : " 4:2:0")
                     << " budget " << impl.max_bitstream << " bytes/frame";
     return self;
   }

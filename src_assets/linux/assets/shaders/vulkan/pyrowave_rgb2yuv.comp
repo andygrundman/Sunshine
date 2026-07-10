@@ -1,13 +1,14 @@
 #version 450
 
-// RGB -> YUV420P (BT.601 limited range) with aspect-preserving scale + letterbox + optional flip.
-// One dispatch over the luma output grid; even invocations also write the subsampled chroma.
+// RGB -> YUV420P/YUV444P (BT.601 limited range) with aspect-preserving scale + letterbox + optional
+// flip. One dispatch over the luma output grid; for 4:2:0 the even invocations also write the
+// subsampled chroma, for 4:4:4 every invocation writes full-resolution chroma.
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D u_src;              // captured RGB (linear sampler)
 layout(set = 0, binding = 1, r8) uniform writeonly image2D u_y;    // luma  (dst.x  x dst.y)
-layout(set = 0, binding = 2, r8) uniform writeonly image2D u_cb;   // chroma (dst.x/2 x dst.y/2)
+layout(set = 0, binding = 2, r8) uniform writeonly image2D u_cb;   // chroma (dst.x/2 x dst.y/2, or dst.x x dst.y for 4:4:4)
 layout(set = 0, binding = 3, r8) uniform writeonly image2D u_cr;
 
 layout(push_constant) uniform PC {
@@ -15,6 +16,7 @@ layout(push_constant) uniform PC {
     ivec2 scaled;   // aspect-fit content size within dst (even)
     ivec2 offset;   // letterbox offset (even)
     int   flip;     // 1 => sample source bottom-up
+    int   chroma444; // 1 => full-resolution chroma (4:4:4), 0 => 2x2-subsampled (4:2:0)
 } pc;
 
 const vec3 kY  = vec3( 0.256788,  0.504129,  0.097906);
@@ -45,7 +47,14 @@ void main() {
     float yv = inside ? dot(kY, rgb) + Y_BIAS : Y_BIAS;
     imageStore(u_y, p, vec4(yv));
 
-    if ((p.x & 1) == 0 && (p.y & 1) == 0) {
+    if (pc.chroma444 != 0) {
+        // 4:4:4: co-sited full-resolution chroma from the same sample as luma.
+        float cb = inside ? dot(kCb, rgb) + C_BIAS : C_BIAS;
+        float cr = inside ? dot(kCr, rgb) + C_BIAS : C_BIAS;
+        imageStore(u_cb, p, vec4(cb));
+        imageStore(u_cr, p, vec4(cr));
+    }
+    else if ((p.x & 1) == 0 && (p.y & 1) == 0) {
         // Box-filter RGB over the 2x2 luma block for proper 4:2:0 chroma instead of point-sampling
         // the top-left texel, which aliases and color-fringes edges (e.g. text).
         vec3 sum = vec3(0.0);

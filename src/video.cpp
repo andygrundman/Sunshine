@@ -2474,7 +2474,7 @@ namespace video {
     safe::signal_t &reinit_event,
     void *channel_data
   ) {
-    auto encoder = platf::pyrowave::encoder_t::create(config.width, config.height, config.bitrate, config.framerate);
+    auto encoder = platf::pyrowave::encoder_t::create(config.width, config.height, config.bitrate, config.framerate, config.chromaSamplingType == 1);
     if (!encoder) {
       BOOST_LOG(error) << "Failed to create PyroWave encoder"sv;
       return;
