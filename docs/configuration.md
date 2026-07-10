@@ -2124,6 +2124,42 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### pyrowave_mode
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Allow the PyroWave codec (GPU wavelet, intra-only, ultra low latency) to be used.
+            Requires a PyroWave-capable Moonlight client and a Vulkan 1.3 GPU; intended for
+            high-bandwidth LAN streaming.
+            @note{Applies to Linux only.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            0
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Choices</td>
+        <td>0</td>
+        <td>disabled</td>
+    </tr>
+    <tr>
+        <td></td>
+        <td>2</td>
+        <td>enabled</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            pyrowave_mode = 2
+            @endcode</td>
+    </tr>
+</table>
+
 ### capture
 
 <table>
