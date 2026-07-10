@@ -2474,7 +2474,11 @@ namespace video {
     safe::signal_t &reinit_event,
     void *channel_data
   ) {
-    auto encoder = platf::pyrowave::encoder_t::create(config.width, config.height, config.bitrate, config.framerate, config.chromaSamplingType == 1);
+    // 10-bit (R16) plane containers whenever a 10-bit profile was negotiated; the HDR color
+    // math additionally requires the display to actually be in HDR mode (else SDR content is
+    // carried in the 10-bit containers and the client presents it as SDR).
+    bool ten_bit = config.dynamicRange == 1;
+    auto encoder = platf::pyrowave::encoder_t::create(config.width, config.height, config.bitrate, config.framerate, config.chromaSamplingType == 1, ten_bit, ten_bit && disp->is_hdr());
     if (!encoder) {
       BOOST_LOG(error) << "Failed to create PyroWave encoder"sv;
       return;
@@ -2957,7 +2961,19 @@ namespace video {
       if (config.videoFormat == 3) {
         // PyroWave path: bypass the encoder_t / encode_device machinery entirely.
         touch_port_event->raise(make_port(display.get(), config));
-        hdr_event->raise(std::make_unique<hdr_info_raw_t>(false));
+
+        // HDR only when the client negotiated a 10-bit PyroWave profile AND the display is
+        // actually in HDR mode (same policy as make_encode_device's colorspace selection).
+        hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
+        if (config.dynamicRange && display->is_hdr()) {
+          if (display->get_hdr_metadata(hdr_info->metadata)) {
+            hdr_info->enabled = true;
+          } else {
+            BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
+          }
+        }
+        hdr_event->raise(std::move(hdr_info));
+
         encode_run_pyrowave(frame_nr, mail, images, config, display, ref->reinit_event, channel_data);
         continue;
       }

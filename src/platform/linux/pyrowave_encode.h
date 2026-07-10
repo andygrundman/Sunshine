@@ -54,9 +54,13 @@ namespace platf::pyrowave {
      * @param bitrate_kbps Negotiated target bitrate in kbps, mapped to a per-frame byte budget.
      * @param frame_rate Frames per second, used with the bitrate to size the per-frame budget.
      * @param yuv444 True for 4:4:4 chroma (full-resolution Cb/Cr), false for 4:2:0.
+     * @param ten_bit True when a 10-bit profile was negotiated: planes use R16_UNORM containers
+     *                (PyroWave is depth-agnostic; the container just must match the client's).
+     * @param hdr True to encode HDR content: BT.2020 NCL full-range on PQ-encoded RGB
+     *            (requires ten_bit and an HDR display; else SDR BT.601 math is used).
      * @return Session on success, nullptr on failure.
      */
-    static std::unique_ptr<encoder_t> create(int width, int height, int bitrate_kbps, int frame_rate, bool yuv444);
+    static std::unique_ptr<encoder_t> create(int width, int height, int bitrate_kbps, int frame_rate, bool yuv444, bool ten_bit, bool hdr);
 
     /**
      * @brief Encode one captured frame into a PyroWave bitstream.

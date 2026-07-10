@@ -154,15 +154,17 @@ namespace platf::pyrowave {
       VkDeviceMemory mem = VK_NULL_HANDLE;
       VkImageView view = VK_NULL_HANDLE;
       int w = 0, h = 0;
+      VkFormat format = VK_FORMAT_R8_UNORM;
 
-      bool init(VkDevice device, VkPhysicalDevice pd, int width, int height) {
+      bool init(VkDevice device, VkPhysicalDevice pd, int width, int height, VkFormat fmt) {
         dev = device;
         w = width;
         h = height;
+        format = fmt;
 
         VkImageCreateInfo ci {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ci.imageType = VK_IMAGE_TYPE_2D;
-        ci.format = VK_FORMAT_R8_UNORM;
+        ci.format = format;
         ci.extent = {(uint32_t) w, (uint32_t) h, 1};
         ci.mipLevels = 1;
         ci.arrayLayers = 1;
@@ -187,7 +189,7 @@ namespace platf::pyrowave {
         VkImageViewCreateInfo vi {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = image;
         vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vi.format = VK_FORMAT_R8_UNORM;
+        vi.format = format;
         vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         return vkCreateImageView(dev, &vi, nullptr, &view) == VK_SUCCESS;
       }
@@ -197,8 +199,8 @@ namespace platf::pyrowave {
         v.image = image;
         v.width = (uint32_t) w;
         v.height = (uint32_t) h;
-        v.image_format = VK_FORMAT_R8_UNORM;
-        v.view_format = VK_FORMAT_R8_UNORM;
+        v.image_format = format;
+        v.view_format = format;
         v.mip_level = 0;
         v.layer = 0;
         v.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -256,6 +258,8 @@ namespace platf::pyrowave {
     int width = 0;
     int height = 0;
     bool yuv444 = false;
+    bool ten_bit = false;
+    bool hdr = false;
     size_t max_bitstream = 0;
 
     // GPU encode resources on PyroWave's own VkDevice (Stage B).
@@ -289,6 +293,7 @@ namespace platf::pyrowave {
       int32_t offset[2];
       int32_t flip;
       int32_t chroma444;
+      int32_t hdr;
     };
 
     ~impl_t() {
@@ -365,9 +370,12 @@ namespace platf::pyrowave {
 
       int chroma_w = yuv444 ? width : width / 2;
       int chroma_h = yuv444 ? height : height / 2;
-      if (!plane_y.init(vk_dev, vk_phys, width, height) ||
-          !plane_cb.init(vk_dev, vk_phys, chroma_w, chroma_h) ||
-          !plane_cr.init(vk_dev, vk_phys, chroma_w, chroma_h)) {
+      // PyroWave is depth-agnostic (normalized-float wavelet); the plane container depth just
+      // has to match what the client decodes into.
+      VkFormat plane_fmt = ten_bit ? VK_FORMAT_R16_UNORM : VK_FORMAT_R8_UNORM;
+      if (!plane_y.init(vk_dev, vk_phys, width, height, plane_fmt) ||
+          !plane_cb.init(vk_dev, vk_phys, chroma_w, chroma_h, plane_fmt) ||
+          !plane_cr.init(vk_dev, vk_phys, chroma_w, chroma_h, plane_fmt)) {
         return false;
       }
 
@@ -599,6 +607,7 @@ namespace platf::pyrowave {
       pc.offset[1] = ((height - pc.scaled[1]) / 2) & ~1;
       pc.flip = desc.y_invert ? 1 : 0;
       pc.chroma444 = yuv444 ? 1 : 0;
+      pc.hdr = hdr ? 1 : 0;
 
       vkResetCommandBuffer(vk_cmd, 0);
       VkCommandBufferBeginInfo beg {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -654,7 +663,7 @@ namespace platf::pyrowave {
     }
   };
 
-  std::unique_ptr<encoder_t> encoder_t::create(int width, int height, int bitrate_kbps, int frame_rate, bool yuv444) {
+  std::unique_ptr<encoder_t> encoder_t::create(int width, int height, int bitrate_kbps, int frame_rate, bool yuv444, bool ten_bit, bool hdr) {
     // 4:2:0 requires even dimensions (harmless for 4:4:4; keeps the letterbox math shared).
     width &= ~1;
     height &= ~1;
@@ -669,6 +678,8 @@ namespace platf::pyrowave {
     impl.width = width;
     impl.height = height;
     impl.yuv444 = yuv444;
+    impl.ten_bit = ten_bit;
+    impl.hdr = hdr && ten_bit;  // HDR color math only makes sense in 10-bit containers
 
     // Per-frame byte budget from bitrate. Intra-only: bitrate / fps bytes per frame.
     if (frame_rate <= 0) {
@@ -706,6 +717,7 @@ namespace platf::pyrowave {
 
     BOOST_LOG(info) << "PyroWave encoder ready (GPU): " << width << "x" << height
                     << (yuv444 ? " 4:4:4" : " 4:2:0")
+                    << (ten_bit ? (impl.hdr ? " 10-bit HDR" : " 10-bit SDR") : " 8-bit")
                     << " budget " << impl.max_bitstream << " bytes/frame";
     return self;
   }

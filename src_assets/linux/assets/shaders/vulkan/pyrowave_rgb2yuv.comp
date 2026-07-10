@@ -1,15 +1,24 @@
 #version 450
 
-// RGB -> YUV420P/YUV444P (BT.601 limited range) with aspect-preserving scale + letterbox + optional
-// flip. One dispatch over the luma output grid; for 4:2:0 the even invocations also write the
+// RGB -> YUV420P/YUV444P with aspect-preserving scale + letterbox + optional flip.
+// One dispatch over the luma output grid; for 4:2:0 the even invocations also write the
 // subsampled chroma, for 4:4:4 every invocation writes full-resolution chroma.
+//
+// Color math:
+//  - SDR (pc.hdr == 0): BT.601 limited range on sRGB-encoded R'G'B' (8- or 16-bit containers).
+//  - HDR (pc.hdr == 1): BT.2020 non-constant-luminance FULL range on PQ-encoded R'G'B'
+//    (10-bit profile, 16-bit containers; full range sidesteps depth-dependent limited-range
+//    scaling and both ends of this codec path are ours).
+//
+// Plane images are declared without a format qualifier (writeonly) so the same pipeline binds
+// R8_UNORM or R16_UNORM views; requires shaderStorageImageWriteWithoutFormat (any desktop GPU).
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-layout(set = 0, binding = 0) uniform sampler2D u_src;              // captured RGB (linear sampler)
-layout(set = 0, binding = 1, r8) uniform writeonly image2D u_y;    // luma  (dst.x  x dst.y)
-layout(set = 0, binding = 2, r8) uniform writeonly image2D u_cb;   // chroma (dst.x/2 x dst.y/2, or dst.x x dst.y for 4:4:4)
-layout(set = 0, binding = 3, r8) uniform writeonly image2D u_cr;
+layout(set = 0, binding = 0) uniform sampler2D u_src;           // captured RGB (linear sampler)
+layout(set = 0, binding = 1) uniform writeonly image2D u_y;     // luma  (dst.x  x dst.y)
+layout(set = 0, binding = 2) uniform writeonly image2D u_cb;    // chroma (dst.x/2 x dst.y/2, or dst.x x dst.y for 4:4:4)
+layout(set = 0, binding = 3) uniform writeonly image2D u_cr;
 
 layout(push_constant) uniform PC {
     ivec2 dst;      // luma output size
@@ -17,13 +26,18 @@ layout(push_constant) uniform PC {
     ivec2 offset;   // letterbox offset (even)
     int   flip;     // 1 => sample source bottom-up
     int   chroma444; // 1 => full-resolution chroma (4:4:4), 0 => 2x2-subsampled (4:2:0)
+    int   hdr;      // 1 => BT.2020 NCL full-range PQ, 0 => BT.601 limited sRGB
 } pc;
 
+// BT.601 limited range
 const vec3 kY  = vec3( 0.256788,  0.504129,  0.097906);
 const vec3 kCb = vec3(-0.148223, -0.290993,  0.439216);
 const vec3 kCr = vec3( 0.439216, -0.367788, -0.071427);
 const float Y_BIAS = 16.0 / 255.0;
 const float C_BIAS = 128.0 / 255.0;
+
+// BT.2020 non-constant luminance (applied to PQ-encoded R'G'B'), full range
+const vec3 kY2020 = vec3(0.2627, 0.6780, 0.0593);
 
 vec3 sample_rgb(ivec2 act) {
     vec2 uv = (vec2(act) + 0.5) / vec2(pc.scaled);
@@ -31,6 +45,30 @@ vec3 sample_rgb(ivec2 act) {
         uv.y = 1.0 - uv.y;
     }
     return texture(u_src, uv).rgb;
+}
+
+float luma_of(vec3 rgb) {
+    if (pc.hdr != 0) {
+        return dot(kY2020, rgb);
+    }
+    return dot(kY, rgb) + Y_BIAS;
+}
+
+// Letterbox fill: black at the correct code point for the active convention.
+float luma_fill() {
+    return pc.hdr != 0 ? 0.0 : Y_BIAS;
+}
+
+vec2 chroma_of(vec3 rgb) {
+    if (pc.hdr != 0) {
+        float y = dot(kY2020, rgb);
+        return vec2((rgb.b - y) / 1.8814, (rgb.r - y) / 1.4746) + 0.5;
+    }
+    return vec2(dot(kCb, rgb), dot(kCr, rgb)) + C_BIAS;
+}
+
+vec2 chroma_fill() {
+    return pc.hdr != 0 ? vec2(0.5) : vec2(C_BIAS);
 }
 
 void main() {
@@ -44,15 +82,13 @@ void main() {
 
     vec3 rgb = inside ? sample_rgb(a) : vec3(0.0);
 
-    float yv = inside ? dot(kY, rgb) + Y_BIAS : Y_BIAS;
-    imageStore(u_y, p, vec4(yv));
+    imageStore(u_y, p, vec4(inside ? luma_of(rgb) : luma_fill()));
 
     if (pc.chroma444 != 0) {
         // 4:4:4: co-sited full-resolution chroma from the same sample as luma.
-        float cb = inside ? dot(kCb, rgb) + C_BIAS : C_BIAS;
-        float cr = inside ? dot(kCr, rgb) + C_BIAS : C_BIAS;
-        imageStore(u_cb, p, vec4(cb));
-        imageStore(u_cr, p, vec4(cr));
+        vec2 c = inside ? chroma_of(rgb) : chroma_fill();
+        imageStore(u_cb, p, vec4(c.x));
+        imageStore(u_cr, p, vec4(c.y));
     }
     else if ((p.x & 1) == 0 && (p.y & 1) == 0) {
         // Box-filter RGB over the 2x2 luma block for proper 4:2:0 chroma instead of point-sampling
@@ -68,11 +104,9 @@ void main() {
                 }
             }
         }
-        vec3 crgb = n > 0.0 ? sum / n : vec3(0.0);
-        float cb = n > 0.0 ? dot(kCb, crgb) + C_BIAS : C_BIAS;
-        float cr = n > 0.0 ? dot(kCr, crgb) + C_BIAS : C_BIAS;
-        ivec2 c = p >> 1;
-        imageStore(u_cb, c, vec4(cb));
-        imageStore(u_cr, c, vec4(cr));
+        vec2 c = n > 0.0 ? chroma_of(sum / n) : chroma_fill();
+        ivec2 cp = p >> 1;
+        imageStore(u_cb, cp, vec4(c.x));
+        imageStore(u_cr, cp, vec4(c.y));
     }
 }
