@@ -89,6 +89,7 @@ jobs:
             --skip-cleanup \
             --skip-cuda \
             --skip-package \
+            --ubuntu-test-repo \
             --appimage-build
           echo "::remove-matcher owner=gcc::"
 
