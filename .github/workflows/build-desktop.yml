@@ -7,10 +7,8 @@ name: Build Desktop (Windows/macOS)
 permissions:
   contents: read
 
+# Currently disabled for pushes (manual dispatch only) — re-add the push trigger to re-enable.
 on:
-  push:
-    branches:
-      - pyrowave-codec
   workflow_dispatch:
 
 concurrency:
