@@ -8,7 +8,8 @@
  *     -> CopyResource into a shareable intermediate texture (legacy/KMT shared, no keyed mutex)
  *     -> D3D11 fence signal + CPU wait
  *     -> intermediate imported once into PyroWave's Vulkan device (D3D11_TEXTURE_KMT handle)
- *     -> RGB->YUV420 compute shader into R8 plane images
+ *     -> RGB->YUV compute shader into R8/R16 plane images (4:2:0 or 4:4:4; FP16 scRGB captures
+ *        are sRGB/PQ-encoded in the shader)
  *     -> pyrowave GPU encode + packetize
  *
  * The extra GPU copy exists because the capture texture uses a keyed mutex, which Granite (the
@@ -57,8 +58,8 @@ namespace platf::pyrowave {
         case DXGI_FORMAT_R10G10B10A2_UNORM:
           return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
         case DXGI_FORMAT_R16G16B16A16_FLOAT:
-          // scRGB HDR capture. The BT.601 shader treats it as display-referred RGB, so colors are
-          // approximate, but the stream stays usable instead of failing outright.
+          // scRGB capture (linear, Rec.709 primaries): the convert shader encodes it to sRGB
+          // (SDR) or BT.2020 PQ (HDR) via the pc.scrgb branch.
           return VK_FORMAT_R16G16B16A16_SFLOAT;
         default:
           return VK_FORMAT_UNDEFINED;
@@ -133,23 +134,25 @@ namespace platf::pyrowave {
       return UINT32_MAX;
     }
 
-    // A single R8_UNORM plane image on PyroWave's device: written by the RGB->YUV compute pass and
-    // read by the GPU encode.
+    // A single R8/R16_UNORM plane image on PyroWave's device: written by the RGB->YUV compute pass
+    // and read by the GPU encode.
     struct plane_image_t {
       VkDevice dev = VK_NULL_HANDLE;
       VkImage image = VK_NULL_HANDLE;
       VkDeviceMemory mem = VK_NULL_HANDLE;
       VkImageView view = VK_NULL_HANDLE;
       int w = 0, h = 0;
+      VkFormat format = VK_FORMAT_R8_UNORM;
 
-      bool init(VkDevice device, VkPhysicalDevice pd, int width, int height) {
+      bool init(VkDevice device, VkPhysicalDevice pd, int width, int height, VkFormat fmt) {
         dev = device;
         w = width;
         h = height;
+        format = fmt;
 
         VkImageCreateInfo ci {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ci.imageType = VK_IMAGE_TYPE_2D;
-        ci.format = VK_FORMAT_R8_UNORM;
+        ci.format = format;
         ci.extent = {(uint32_t) w, (uint32_t) h, 1};
         ci.mipLevels = 1;
         ci.arrayLayers = 1;
@@ -174,7 +177,7 @@ namespace platf::pyrowave {
         VkImageViewCreateInfo vi {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = image;
         vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vi.format = VK_FORMAT_R8_UNORM;
+        vi.format = format;
         vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         return vkCreateImageView(dev, &vi, nullptr, &view) == VK_SUCCESS;
       }
@@ -184,8 +187,8 @@ namespace platf::pyrowave {
         v.image = image;
         v.width = (uint32_t) w;
         v.height = (uint32_t) h;
-        v.image_format = VK_FORMAT_R8_UNORM;
-        v.view_format = VK_FORMAT_R8_UNORM;
+        v.image_format = format;
+        v.view_format = format;
         v.mip_level = 0;
         v.layer = 0;
         v.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -242,6 +245,9 @@ namespace platf::pyrowave {
     pyrowave_encoder enc = nullptr;
     int width = 0;
     int height = 0;
+    bool yuv444 = false;
+    bool ten_bit = false;
+    bool hdr = false;
     size_t max_bitstream = 0;
 
     // GPU resources are created lazily on the first frame (the capture adapter is only known once
@@ -308,6 +314,9 @@ namespace platf::pyrowave {
       int32_t scaled[2];
       int32_t offset[2];
       int32_t flip;
+      int32_t chroma444;
+      int32_t hdr;
+      int32_t scrgb;  // 1 => FP16 scRGB capture: shader encodes linear -> sRGB (SDR) / PQ (HDR)
     };
 
     ~impl_t() {
@@ -434,7 +443,7 @@ namespace platf::pyrowave {
       eci.device = pdev;
       eci.width = width;
       eci.height = height;
-      eci.chroma = PYROWAVE_CHROMA_SUBSAMPLING_420;
+      eci.chroma = yuv444 ? PYROWAVE_CHROMA_SUBSAMPLING_444 : PYROWAVE_CHROMA_SUBSAMPLING_420;
       if (pyrowave_encoder_create(&eci, &enc) != PYROWAVE_SUCCESS) {
         BOOST_LOG(error) << "PyroWave: pyrowave_encoder_create failed";
         return false;
@@ -470,9 +479,14 @@ namespace platf::pyrowave {
         return false;
       }
 
-      if (!plane_y.init(vk_dev, vk_phys, width, height) ||
-          !plane_cb.init(vk_dev, vk_phys, width / 2, height / 2) ||
-          !plane_cr.init(vk_dev, vk_phys, width / 2, height / 2)) {
+      int chroma_w = yuv444 ? width : width / 2;
+      int chroma_h = yuv444 ? height : height / 2;
+      // PyroWave is depth-agnostic (normalized-float wavelet); the plane container depth just
+      // has to match what the client decodes into.
+      VkFormat plane_fmt = ten_bit ? VK_FORMAT_R16_UNORM : VK_FORMAT_R8_UNORM;
+      if (!plane_y.init(vk_dev, vk_phys, width, height, plane_fmt) ||
+          !plane_cb.init(vk_dev, vk_phys, chroma_w, chroma_h, plane_fmt) ||
+          !plane_cr.init(vk_dev, vk_phys, chroma_w, chroma_h, plane_fmt)) {
         return false;
       }
 
@@ -578,9 +592,6 @@ namespace platf::pyrowave {
       if (vk_format == VK_FORMAT_UNDEFINED) {
         BOOST_LOG(error) << "PyroWave: unsupported capture format " << img.format;
         return false;
-      }
-      if (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
-        BOOST_LOG(warning) << "PyroWave: scRGB FP16 (HDR) capture; SDR color conversion will be approximate";
       }
 
       // All prior Vulkan work is fence-waited, so the old import can be destroyed safely.
@@ -723,6 +734,11 @@ namespace platf::pyrowave {
       pc.offset[0] = ((width - pc.scaled[0]) / 2) & ~1;
       pc.offset[1] = ((height - pc.scaled[1]) / 2) & ~1;
       pc.flip = 0;  // D3D11 capture textures are top-down
+      pc.chroma444 = yuv444 ? 1 : 0;
+      pc.hdr = hdr ? 1 : 0;
+      // FP16 captures are scRGB (linear, Rec.709 primaries); the shader encodes them to sRGB
+      // (SDR) or BT.2020 PQ (HDR). 8/10-bit captures arrive already display-referred.
+      pc.scrgb = (cap_fmt == DXGI_FORMAT_R16G16B16A16_FLOAT) ? 1 : 0;
 
       vkResetCommandBuffer(vk_cmd, 0);
       VkCommandBufferBeginInfo beg {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -784,8 +800,8 @@ namespace platf::pyrowave {
     }
   };
 
-  std::unique_ptr<encoder_t> encoder_t::create(int width, int height, int bitrate_kbps, int frame_rate) {
-    // 4:2:0 requires even dimensions.
+  std::unique_ptr<encoder_t> encoder_t::create(int width, int height, int bitrate_kbps, int frame_rate, bool yuv444, bool ten_bit, bool hdr) {
+    // 4:2:0 requires even dimensions (harmless for 4:4:4; keeps the letterbox math shared).
     width &= ~1;
     height &= ~1;
     if (width <= 0 || height <= 0) {
@@ -798,6 +814,9 @@ namespace platf::pyrowave {
 
     impl.width = width;
     impl.height = height;
+    impl.yuv444 = yuv444;
+    impl.ten_bit = ten_bit;
+    impl.hdr = hdr && ten_bit;  // HDR color math only makes sense in 10-bit containers
 
     // Per-frame byte budget from bitrate. Intra-only: bitrate / fps bytes per frame.
     if (frame_rate <= 0) {
@@ -812,6 +831,8 @@ namespace platf::pyrowave {
     // GPU resources (bridge D3D11 device, PyroWave Vulkan device, encoder) are created on the
     // first encode() call, when the capture adapter is known from the captured image.
     BOOST_LOG(info) << "PyroWave encoder session: " << width << "x" << height
+                    << (yuv444 ? " 4:4:4" : " 4:2:0")
+                    << (ten_bit ? (impl.hdr ? " 10-bit HDR" : " 10-bit SDR") : " 8-bit")
                     << " budget " << impl.max_bitstream << " bytes/frame";
     return self;
   }
@@ -838,7 +859,9 @@ namespace platf::pyrowave {
         return -1;
       }
       impl.state = impl_t::state_e::ready;
-      BOOST_LOG(info) << "PyroWave encoder ready (GPU): " << impl.width << 'x' << impl.height;
+      BOOST_LOG(info) << "PyroWave encoder ready (GPU): " << impl.width << 'x' << impl.height
+                      << (impl.yuv444 ? " 4:4:4" : " 4:2:0")
+                      << (impl.ten_bit ? (impl.hdr ? " 10-bit HDR" : " 10-bit SDR") : " 8-bit");
     }
 
     if (!impl.ensure_intermediate(*d3d_img)) {

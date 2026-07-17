@@ -10,6 +10,11 @@
 //    (10-bit profile, 16-bit containers; full range sidesteps depth-dependent limited-range
 //    scaling and both ends of this codec path are ours).
 //
+// Source encoding (pc.scrgb): Linux captures arrive display-referred (sRGB- or PQ-encoded), but
+// Windows FP16 captures are scRGB (Rec.709 primaries, LINEAR, 1.0 = 80 nits). When pc.scrgb == 1
+// the sampled texels are first encoded to sRGB (SDR) or rotated to BT.2020 and PQ-encoded (HDR),
+// with the same math as the host's D3D11 convert shaders (include/common.hlsl).
+//
 // Plane images are declared without a format qualifier (writeonly) so the same pipeline binds
 // R8_UNORM or R16_UNORM views; requires shaderStorageImageWriteWithoutFormat (any desktop GPU).
 
@@ -27,6 +32,7 @@ layout(push_constant) uniform PC {
     int   flip;     // 1 => sample source bottom-up
     int   chroma444; // 1 => full-resolution chroma (4:4:4), 0 => 2x2-subsampled (4:2:0)
     int   hdr;      // 1 => BT.2020 NCL full-range PQ, 0 => BT.601 limited sRGB
+    int   scrgb;    // 1 => source is linear scRGB and must be sRGB/PQ-encoded first
 } pc;
 
 // BT.601 limited range
@@ -39,12 +45,50 @@ const float C_BIAS = 128.0 / 255.0;
 // BT.2020 non-constant luminance (applied to PQ-encoded R'G'B'), full range
 const vec3 kY2020 = vec3(0.2627, 0.6780, 0.0593);
 
+// Fast sRGB encode approximation; matches ApplySRGBCurve in the host D3D11 shaders.
+vec3 srgb_encode(vec3 x) {
+    x = clamp(x, 0.0, 1.0);
+    vec3 hi = 1.13005 * sqrt(max(x - 0.00228, 0.0)) - 0.13448 * x + 0.005719;
+    return mix(hi, 12.92 * x, lessThan(x, vec3(0.0031308)));
+}
+
+vec3 rec709_to_rec2020(vec3 v) {
+    const mat3 m = mat3(  // column-major; rows match the host's Rec709toRec2020
+        0.627402, 0.069095, 0.016394,
+        0.329292, 0.919544, 0.088028,
+        0.043306, 0.011360, 0.895578);
+    return m * v;
+}
+
+vec3 nits_to_pq(vec3 L) {
+    // Constants from SMPTE 2084 PQ
+    const float m1 = 2610.0 / 4096.0 / 4.0;
+    const float m2 = 2523.0 / 4096.0 * 128.0;
+    const float c1 = 3424.0 / 4096.0;
+    const float c2 = 2413.0 / 4096.0 * 32.0;
+    const float c3 = 2392.0 / 4096.0 * 32.0;
+    vec3 Lp = pow(clamp(L / 10000.0, 0.0, 1.0), vec3(m1));
+    return pow((c1 + c2 * Lp) / (1.0 + c3 * Lp), vec3(m2));
+}
+
+// Decode a captured texel to the display-referred R'G'B' the matrices below expect.
+vec3 decode_src(vec3 v) {
+    if (pc.scrgb == 0) {
+        return v;  // already sRGB- (SDR) or PQ-encoded (HDR)
+    }
+    if (pc.hdr != 0) {
+        // scRGB 1.0 is defined as 80 nits.
+        return nits_to_pq(rec709_to_rec2020(v) * 80.0);
+    }
+    return srgb_encode(v);
+}
+
 vec3 sample_rgb(ivec2 act) {
     vec2 uv = (vec2(act) + 0.5) / vec2(pc.scaled);
     if (pc.flip != 0) {
         uv.y = 1.0 - uv.y;
     }
-    return texture(u_src, uv).rgb;
+    return decode_src(texture(u_src, uv).rgb);
 }
 
 float luma_of(vec3 rgb) {

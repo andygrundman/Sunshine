@@ -294,6 +294,7 @@ namespace platf::pyrowave {
       int32_t flip;
       int32_t chroma444;
       int32_t hdr;
+      int32_t scrgb;  // always 0 on Linux: captures arrive display-referred (sRGB/PQ-encoded)
     };
 
     ~impl_t() {
