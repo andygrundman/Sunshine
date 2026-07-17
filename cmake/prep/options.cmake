@@ -69,6 +69,9 @@ elseif(UNIX)  # Linux
             "Enable KWin ScreenCast grab if available" ON)
     option(SUNSHINE_ENABLE_PORTAL
             "Enable XDG portal grab if available" ON)
-    option(SUNSHINE_ENABLE_PYROWAVE
-            "Enable PyroWave (Vulkan wavelet) encoding. Requires SUNSHINE_ENABLE_VULKAN and the third-party/pyrowave submodule (with Granite fetched via its checkout_granite.sh)." OFF)
 endif()
+
+# PyroWave is supported on Linux and Windows.
+option(SUNSHINE_ENABLE_PYROWAVE
+        "Enable PyroWave (Vulkan wavelet) encoding. Requires the third-party/pyrowave submodule (with Granite fetched
+        via its checkout_granite.sh) and, on Linux, SUNSHINE_ENABLE_VULKAN." OFF)

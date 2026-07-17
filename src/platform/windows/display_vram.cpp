@@ -151,37 +151,8 @@ namespace platf::dxgi {
   blob_t cursor_ps_normalize_white_hlsl;  ///< Cursor ps normalize white hlsl.
   blob_t cursor_vs_hlsl;  ///< Cursor vs hlsl.
 
-  /**
-   * @brief D3D-backed captured image and duplication metadata.
-   */
-  struct img_d3d_t: public platf::img_t {
-    // These objects are owned by the display_t's ID3D11Device
-    texture2d_t capture_texture;  ///< Capture texture.
-    render_target_t capture_rt;  ///< Capture rt.
-    keyed_mutex_t capture_mutex;  ///< Capture mutex.
-
-    // This is the shared handle used by hwdevice_t to open capture_texture
-    HANDLE encoder_texture_handle = {};  ///< Encoder texture handle.
-
-    // Set to true if the image corresponds to a dummy texture used prior to
-    // the first successful capture of a desktop frame
-    bool dummy = false;  ///< Whether this image is a dummy placeholder.
-
-    // Set to true if the image is blank (contains no content at all, including a cursor)
-    bool blank = true;  ///< Whether the texture currently contains a blank frame.
-
-    // Unique identifier for this image
-    uint32_t id = 0;  ///< Unique identifier used to cache encoder resources for this image.
-
-    // DXGI format of this image texture
-    DXGI_FORMAT format;  ///< DXGI format of the captured texture.
-
-    virtual ~img_d3d_t() override {
-      if (encoder_texture_handle) {
-        CloseHandle(encoder_texture_handle);
-      }
-    };
-  };
+  // img_d3d_t (the D3D-backed captured image) is declared in display.h so that other
+  // encode paths (e.g. the PyroWave encoder) can open the shared capture texture.
 
   /**
    * @brief Keyed-mutex guard used while sharing a D3D texture.

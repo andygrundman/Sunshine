@@ -177,6 +177,12 @@ fi
 pacman -S "${dependencies[@]}"
 ```
 
+To build with PyroWave support (`-DSUNSHINE_ENABLE_PYROWAVE=ON`), also install the Vulkan loader and headers,
+and build the vendored PyroWave shared library first (see `cmake/dependencies/pyrowave.cmake`):
+```bash
+pacman -S "mingw-w64-${TOOLCHAIN}-vulkan-loader" "mingw-w64-${TOOLCHAIN}-vulkan-headers"
+```
+
 To create a WiX installer, you also need to install [.NET](https://dotnet.microsoft.com/download).
 
 For ARM64: To build frontend, you also need to install [Node.JS](https://nodejs.org/en/download)

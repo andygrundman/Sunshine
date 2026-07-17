@@ -32,7 +32,11 @@ extern "C" {
 #include "video.h"
 
 #ifdef SUNSHINE_ENABLE_PYROWAVE
-  #include "platform/linux/pyrowave_encode.h"
+  #ifdef _WIN32
+    #include "platform/windows/pyrowave_encode.h"
+  #else
+    #include "platform/linux/pyrowave_encode.h"
+  #endif
 #endif
 
 #ifdef _WIN32

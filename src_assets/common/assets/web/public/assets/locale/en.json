@@ -163,7 +163,7 @@
     "pyrowave_mode": "PyroWave Support",
     "pyrowave_mode_0": "Sunshine will not advertise support for PyroWave (default)",
     "pyrowave_mode_2": "Sunshine will advertise support for PyroWave",
-    "pyrowave_mode_desc": "Allows the client to request PyroWave, a GPU wavelet (intra-only) codec for low-latency local streaming. Requires a Vulkan GPU and a DMA-BUF capture (encoder=vulkan) on the host, and a PyroWave-capable Moonlight client.",
+    "pyrowave_mode_desc": "Allows the client to request PyroWave, a GPU wavelet (intra-only) codec for low-latency local streaming. Requires a Vulkan GPU and a GPU capture path on the host (Linux: DMA-BUF capture via encoder=vulkan; Windows: a hardware encoder display backend), and a PyroWave-capable Moonlight client.",
     "back_button_timeout": "Home/Guide Button Emulation Timeout",
     "back_button_timeout_desc": "If the Back/Select button is held down for the specified number of milliseconds, a Home/Guide button press is emulated. If set to a value < 0 (default), holding the Back/Select button will not emulate the Home/Guide button.",
     "bind_address": "Bind address",

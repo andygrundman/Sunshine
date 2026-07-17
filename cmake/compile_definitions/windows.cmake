@@ -105,3 +105,13 @@ list(PREPEND PLATFORM_LIBRARIES
         ws2_32
         wsock32
 )
+
+# pyrowave (Vulkan wavelet codec) — optional, off by default
+if(${SUNSHINE_ENABLE_PYROWAVE})
+    include("${CMAKE_MODULE_PATH}/dependencies/pyrowave.cmake")
+    list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_ENABLE_PYROWAVE=1)
+    list(APPEND PLATFORM_LIBRARIES ${PYROWAVE_LIBRARIES})
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave_encode.h"
+            "${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave_encode.cpp")
+endif()
