@@ -262,6 +262,10 @@ namespace platf::pyrowave {
     bool hdr = false;
     size_t max_bitstream = 0;
 
+    // Packetization buffers, reused across frames (see the sizing comment in encode()).
+    std::vector<uint8_t> scratch;
+    std::vector<pyrowave_packet> packets;
+
     // GPU encode resources on PyroWave's own VkDevice (Stage B).
     VkDevice vk_dev = VK_NULL_HANDLE;
     VkPhysicalDevice vk_phys = VK_NULL_HANDLE;
@@ -762,14 +766,28 @@ namespace platf::pyrowave {
     const size_t packet_boundary = 1024;
     size_t num_packets = 0;
     if (pyrowave_encoder_compute_num_packets(impl.enc, packet_boundary, &num_packets) != PYROWAVE_SUCCESS) {
+      BOOST_LOG(error) << "PyroWave: compute_num_packets failed";
       return -1;
     }
 
-    std::vector<uint8_t> scratch(num_packets * packet_boundary);
-    std::vector<pyrowave_packet> packets(num_packets);
+    // Size the bitstream buffer for the worst case, NOT num_packets * packet_boundary:
+    // pyrowave's packetize() only closes a packet after the block that overflows it, so a packet
+    // can exceed packet_boundary by one block (up to 4097 words; payload_words is a 12-bit
+    // field), and packetize() does not bounds-check the output buffer in release builds.
+    // High-entropy frames (e.g. full-range 10-bit HDR) actually hit this. Buffers are reused
+    // across frames (grow-only).
+    const size_t max_block_bytes = 64 * 1024;  // hard cap is ~16.4 KiB/block; 4x margin
+    size_t scratch_bound = 4096 + num_packets * (packet_boundary + max_block_bytes);
+    if (impl.scratch.size() < scratch_bound) {
+      impl.scratch.resize(scratch_bound);
+    }
+    if (impl.packets.size() < num_packets) {
+      impl.packets.resize(num_packets);
+    }
     size_t out_packets = 0;
-    if (pyrowave_encoder_packetize(impl.enc, packets.data(), packet_boundary,
-                                   &out_packets, scratch.data(), scratch.size()) != PYROWAVE_SUCCESS) {
+    if (pyrowave_encoder_packetize(impl.enc, impl.packets.data(), packet_boundary,
+                                   &out_packets, impl.scratch.data(), impl.scratch.size()) != PYROWAVE_SUCCESS) {
+      BOOST_LOG(error) << "PyroWave: packetize failed";
       return -1;
     }
 
@@ -783,9 +801,9 @@ namespace platf::pyrowave {
     out.clear();
     put_u32((uint32_t) out_packets);
     for (size_t i = 0; i < out_packets; i++) {
-      put_u32((uint32_t) packets[i].size);
-      const uint8_t *src = scratch.data() + packets[i].offset;
-      out.insert(out.end(), src, src + packets[i].size);
+      put_u32((uint32_t) impl.packets[i].size);
+      const uint8_t *src = impl.scratch.data() + impl.packets[i].offset;
+      out.insert(out.end(), src, src + impl.packets[i].size);
     }
     return 0;
   }

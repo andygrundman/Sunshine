@@ -5,9 +5,9 @@
  * Frame path:
  *   img_d3d_t (D3D11 shared capture texture, keyed mutex)
  *     -> open on a private D3D11 "bridge" device (cached per image)
- *     -> CopyResource into a shareable intermediate texture (legacy/KMT shared, no keyed mutex)
+ *     -> CopyResource into a shareable intermediate texture (NT-handle shared, no keyed mutex)
  *     -> D3D11 fence signal + CPU wait
- *     -> intermediate imported once into PyroWave's Vulkan device (D3D11_TEXTURE_KMT handle)
+ *     -> intermediate imported once into PyroWave's Vulkan device (D3D11_TEXTURE NT handle)
  *     -> RGB->YUV compute shader into R8/R16 plane images (4:2:0 or 4:4:4; FP16 scRGB captures
  *        are sRGB/PQ-encoded in the shader)
  *     -> pyrowave GPU encode + packetize
@@ -250,6 +250,10 @@ namespace platf::pyrowave {
     bool hdr = false;
     size_t max_bitstream = 0;
 
+    // Packetization buffers, reused across frames (see the sizing comment in encode()).
+    std::vector<uint8_t> scratch;
+    std::vector<pyrowave_packet> packets;
+
     // GPU resources are created lazily on the first frame (the capture adapter is only known once
     // a captured image is seen). Once init fails, the session stays failed instead of retrying and
     // spamming the log every frame.
@@ -273,7 +277,6 @@ namespace platf::pyrowave {
     // Shareable intermediate texture (copy destination) and its Vulkan import. Recreated if the
     // capture format changes (e.g. the initial dummy frame is BGRA8 but real capture is FP16).
     dxgi::texture2d_t inter_tex;
-    HANDLE inter_handle = nullptr;  // legacy/KMT share handle: not owned, never closed
     int cap_w = 0, cap_h = 0;
     DXGI_FORMAT cap_fmt = DXGI_FORMAT_UNKNOWN;
     pyrowave_image imp_img = nullptr;
@@ -597,7 +600,6 @@ namespace platf::pyrowave {
       // All prior Vulkan work is fence-waited, so the old import can be destroyed safely.
       destroy_import();
       inter_tex.reset();
-      inter_handle = nullptr;
 
       D3D11_TEXTURE2D_DESC t {};
       t.Width = img.width;
@@ -608,23 +610,25 @@ namespace platf::pyrowave {
       t.Usage = D3D11_USAGE_DEFAULT;
       t.Format = img.format;
       t.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-      // Legacy (KMT) sharing: no keyed mutex, so Vulkan can access it without submit-time mutex
-      // support, and the handle is a non-owning reference.
-      t.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+      // NT-handle sharing without a keyed mutex (SHARED | SHARED_NTHANDLE), matching PyroWave's
+      // own D3D11 interop test. The NT handle path is the one PyroWave's NVIDIA workarounds
+      // cover; legacy KMT sharing crashed in the driver with FP16 (HDR) capture formats.
+      t.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
       auto status = d3d_dev->CreateTexture2D(&t, nullptr, &inter_tex);
       if (FAILED(status)) {
         BOOST_LOG(error) << "PyroWave: failed to create intermediate texture [0x" << util::hex(status).to_string_view() << ']';
         return false;
       }
 
-      dxgi::resource_t resource;
-      status = inter_tex->QueryInterface(__uuidof(IDXGIResource), (void **) &resource);
+      dxgi::resource1_t resource;
+      status = inter_tex->QueryInterface(__uuidof(IDXGIResource1), (void **) &resource);
       if (FAILED(status)) {
         return false;
       }
-      status = resource->GetSharedHandle(&inter_handle);
+      HANDLE nt_handle = nullptr;
+      status = resource->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &nt_handle);
       if (FAILED(status)) {
-        BOOST_LOG(error) << "PyroWave: failed to get intermediate share handle [0x" << util::hex(status).to_string_view() << ']';
+        BOOST_LOG(error) << "PyroWave: failed to create intermediate share handle [0x" << util::hex(status).to_string_view() << ']';
         return false;
       }
 
@@ -642,11 +646,13 @@ namespace platf::pyrowave {
 
       pyrowave_image_create_info pici {};
       pici.device = pdev;
-      pici.external_handle = (pyrowave_os_handle) inter_handle;
-      pici.handle_type = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
+      pici.external_handle = (pyrowave_os_handle) nt_handle;
+      pici.handle_type = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
       pici.image_create_info = &ici;
+      // PyroWave takes ownership of the NT handle and closes it on import. Do not close it here
+      // even on failure: the import path may already have consumed it.
       if (pyrowave_image_create(&pici, &imp_img) != PYROWAVE_SUCCESS) {
-        BOOST_LOG(error) << "PyroWave: failed to import intermediate texture into Vulkan";
+        BOOST_LOG(error) << "PyroWave: failed to import intermediate texture into Vulkan (format " << img.format << ')';
         return false;
       }
 
@@ -674,6 +680,7 @@ namespace platf::pyrowave {
       cap_h = img.height;
       cap_fmt = img.format;
       first_convert = true;
+      BOOST_LOG(info) << "PyroWave: intermediate texture ready " << cap_w << 'x' << cap_h << " format " << cap_fmt;
       return true;
     }
 
@@ -792,10 +799,17 @@ namespace platf::pyrowave {
       si.commandBufferCount = 1;
       si.pCommandBuffers = &vk_cmd;
       vkResetFences(vk_dev, 1, &vk_fence);
-      if (vkQueueSubmit(vk_queue, 1, &si, vk_fence) != VK_SUCCESS) {
+      auto vr = vkQueueSubmit(vk_queue, 1, &si, vk_fence);
+      if (vr != VK_SUCCESS) {
+        BOOST_LOG(error) << "PyroWave: convert submit failed (" << vr << ')';
         return false;
       }
-      vkWaitForFences(vk_dev, 1, &vk_fence, VK_TRUE, UINT64_MAX);
+      vr = vkWaitForFences(vk_dev, 1, &vk_fence, VK_TRUE, UINT64_MAX);
+      if (vr != VK_SUCCESS) {
+        // Likely VK_ERROR_DEVICE_LOST; do not hand a dead device to the PyroWave encoder.
+        BOOST_LOG(error) << "PyroWave: convert fence wait failed (" << vr << ')';
+        return false;
+      }
       return true;
     }
   };
@@ -873,7 +887,10 @@ namespace platf::pyrowave {
       return -1;
     }
     if (!impl.convert()) {
+      // Vulkan-level failure (submit or fence): the device is almost certainly lost, so stop the
+      // session instead of feeding a dead device to the PyroWave encoder every frame.
       BOOST_LOG(error) << "PyroWave: RGB->YUV convert failed";
+      impl.state = impl_t::state_e::failed;
       return -1;
     }
 
@@ -900,14 +917,28 @@ namespace platf::pyrowave {
     const size_t packet_boundary = 1024;
     size_t num_packets = 0;
     if (pyrowave_encoder_compute_num_packets(impl.enc, packet_boundary, &num_packets) != PYROWAVE_SUCCESS) {
+      BOOST_LOG(error) << "PyroWave: compute_num_packets failed";
       return -1;
     }
 
-    std::vector<uint8_t> scratch(num_packets * packet_boundary);
-    std::vector<pyrowave_packet> packets(num_packets);
+    // Size the bitstream buffer for the worst case, NOT num_packets * packet_boundary:
+    // pyrowave's packetize() only closes a packet after the block that overflows it, so a packet
+    // can exceed packet_boundary by one block (up to 4097 words; payload_words is a 12-bit
+    // field), and packetize() does not bounds-check the output buffer in release builds.
+    // High-entropy frames (e.g. full-range 10-bit HDR) actually hit this. Buffers are reused
+    // across frames (grow-only).
+    const size_t max_block_bytes = 64 * 1024;  // hard cap is ~16.4 KiB/block; 4x margin
+    size_t scratch_bound = 4096 + num_packets * (packet_boundary + max_block_bytes);
+    if (impl.scratch.size() < scratch_bound) {
+      impl.scratch.resize(scratch_bound);
+    }
+    if (impl.packets.size() < num_packets) {
+      impl.packets.resize(num_packets);
+    }
     size_t out_packets = 0;
-    if (pyrowave_encoder_packetize(impl.enc, packets.data(), packet_boundary,
-                                   &out_packets, scratch.data(), scratch.size()) != PYROWAVE_SUCCESS) {
+    if (pyrowave_encoder_packetize(impl.enc, impl.packets.data(), packet_boundary,
+                                   &out_packets, impl.scratch.data(), impl.scratch.size()) != PYROWAVE_SUCCESS) {
+      BOOST_LOG(error) << "PyroWave: packetize failed";
       return -1;
     }
 
@@ -921,9 +952,9 @@ namespace platf::pyrowave {
     out.clear();
     put_u32((uint32_t) out_packets);
     for (size_t i = 0; i < out_packets; i++) {
-      put_u32((uint32_t) packets[i].size);
-      const uint8_t *src = scratch.data() + packets[i].offset;
-      out.insert(out.end(), src, src + packets[i].size);
+      put_u32((uint32_t) impl.packets[i].size);
+      const uint8_t *src = impl.scratch.data() + impl.packets[i].offset;
+      out.insert(out.end(), src, src + impl.packets[i].size);
     }
     return 0;
   }
