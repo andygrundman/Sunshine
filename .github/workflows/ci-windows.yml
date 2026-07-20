@@ -218,6 +218,14 @@ jobs:
             --no-python-downloads \
             --no-install-project
 
+      - name: Build PyroWave
+        shell: msys2 {0}
+        working-directory: third-party/pyrowave
+        run: |
+          ./checkout_granite.sh
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
       - name: Build Windows
         shell: msys2 {0}
         env:
@@ -237,6 +245,7 @@ jobs:
             -B build \
             -G Ninja \
             -S . \
+            -DSUNSHINE_ENABLE_PYROWAVE=ON \
             -DBUILD_WERROR=ON \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DSUNSHINE_ASSETS_DIR=assets \
