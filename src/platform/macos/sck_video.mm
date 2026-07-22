@@ -9,8 +9,10 @@
 #include "cf_helpers.h"
 #include "qpc_chrono.h"
 #include "sck_picker.h"
+#include "src/config.h"
 #include "src/logging.h"
 
+#include <dlfcn.h>
 #include <mutex>
 #include <pthread.h>
 
@@ -90,6 +92,11 @@ static void destroy_screen_stream(struct screen_capture *sc) {
   if (sc->stream) {
     [sc->stream release];
     sc->stream = NULL;
+  }
+
+  if (sc->vsync_disabled) {
+    set_quartz_vsync(true);
+    sc->vsync_disabled = false;
   }
 
   os_event_destroy(sc->stream_start_completed);
@@ -301,13 +308,30 @@ static bool init_screen_stream(struct screen_capture *sc) {
 
   if (sc->colorspace.colorspace == video::colorspace_e::bt2020) {
     // "Capture HDR content with ScreenCaptureKit" https://developer.apple.com/videos/play/wwdc2024/10088
-    [sc->stream_properties setCaptureDynamicRange:SCCaptureDynamicRangeHDRCanonicalDisplay]; // XXX: setting to choose this
+    SCCaptureDynamicRange dynamic_range;
+    switch (config::video.macos_capture_dynamic_range) {
+      case config::video_t::macos_capture_dynamic_range_e::sdr:
+        dynamic_range = SCCaptureDynamicRangeSDR;
+        break;
+      case config::video_t::macos_capture_dynamic_range_e::hdr_local:
+        dynamic_range = SCCaptureDynamicRangeHDRLocalDisplay;
+        break;
+      default:
+        dynamic_range = SCCaptureDynamicRangeHDRCanonicalDisplay;
+        break;
+    }
+    [sc->stream_properties setCaptureDynamicRange:dynamic_range];
     [sc->stream_properties setColorSpaceName:kCGColorSpaceDisplayP3_PQ];
     [sc->stream_properties setColorMatrix:kCVImageBufferYCbCrMatrix_ITU_R_709_2];
   } else {
     [sc->stream_properties setCaptureDynamicRange:SCCaptureDynamicRangeSDR];
     [sc->stream_properties setColorSpaceName:kCGColorSpaceITUR_709];
     [sc->stream_properties setColorMatrix:kCVImageBufferYCbCrMatrix_ITU_R_709_2];
+  }
+
+  if (config::video.macos_disable_vsync) {
+    set_quartz_vsync(false);
+    sc->vsync_disabled = true;
   }
 
   // if (sc->capture_audio) {
@@ -882,15 +906,13 @@ bool build_display_list(struct screen_capture *sc, const std::string &capture_ta
       }
     }
 
-    BOOST_LOG(info) << (found_match ? "[*]"sv : "   "sv)
-                    << " {"sv << uuid_buffer << "} "
-                    << "displayID="sv << display.displayID << " "
-                    << display_screen.localizedName.UTF8String << ": "
+    BOOST_LOG(info) << display_screen.localizedName.UTF8String
+                    << " (id: " << display.displayID << ") "
                     << (uint32_t) display_screen.frame.size.width << "x"
                     << (uint32_t) display_screen.frame.size.height << " @ "
                     << (int32_t) display_screen.frame.origin.x << ","
                     << (int32_t) display_screen.frame.origin.y
-                    << " canHDR=" << canHDR;
+                    << " supports HDR: " << canHDR;
 
     if (uuid_string != NULL) {
       CFRelease(uuid_string);
@@ -979,4 +1001,40 @@ bool build_application_list(struct screen_capture *sc, const std::string &captur
 
   os_sem_post(sc->shareable_content_available);
   return true;
+}
+
+typedef void (*set_int_t)(int);
+
+void set_quartz_vsync(bool enable) {
+  static bool initialized = false;
+  static bool valid = false;
+  static set_int_t set_debug_options = nullptr;
+  static set_int_t deferred_updates = nullptr;
+
+  if (!initialized) {
+    void *quartzCore = dlopen(
+      "/System/Library/Frameworks/"
+      "QuartzCore.framework/QuartzCore",
+      RTLD_LAZY
+    );
+    if (quartzCore) {
+      set_debug_options = (set_int_t) dlsym(quartzCore, "CGSSetDebugOptions");
+      deferred_updates = (set_int_t) dlsym(quartzCore, "CGSDeferredUpdates");
+
+      valid = set_debug_options && deferred_updates;
+    }
+
+    if (!valid) {
+      BOOST_LOG(warning) << "Unable to change macOS V-sync, stream may have reduced performancee.";
+    }
+
+    initialized = true;
+  }
+
+  if (valid) {
+    set_debug_options(enable ? 0 : 0x08000000);
+    deferred_updates(enable ? 1 : 0);
+
+    BOOST_LOG(info) << "macOS V-sync " << (enable ? "enabled" : "disabled");
+  }
 }

@@ -486,10 +486,9 @@ namespace platf {
   /**
    * @brief Report whether encoder backends should be probed again before streaming.
    *
-   * @return Always `true` because macOS GPU changes are not tracked by this backend.
+   * @return Always `false` on macOS.
    */
   bool needs_encoder_reenumeration() {
-    // We don't track GPU state, so we will always reenumerate. Fortunately, it is fast on macOS.
-    return true;
+    return false;
   }
 }  // namespace platf

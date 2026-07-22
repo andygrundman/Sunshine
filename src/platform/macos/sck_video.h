@@ -57,6 +57,7 @@ struct screen_capture {
   dispatch_queue_t audio_queue;
   CMSampleBufferRef current, prev;
   bool capture_failed;
+  bool vsync_disabled;
 
   pthread_mutex_t mutex;
 
@@ -87,3 +88,4 @@ void screen_stream_audio_update(struct screen_capture *sc, CMSampleBufferRef sam
 CMSampleBufferRef sck_get_latest_sample_buffer(struct screen_capture *sc, std::chrono::milliseconds timeout);
 void sck_set_show_cursor(struct screen_capture *sc, bool visible);
 void sck_set_frame_size(struct screen_capture *sc, int width, int height);
+void set_quartz_vsync(bool enable) ;

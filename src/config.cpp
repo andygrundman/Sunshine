@@ -578,6 +578,27 @@ namespace config {
 
   }  // namespace vt
 
+  namespace macos {
+    /**
+     * @brief Parse the ScreenCaptureKit capture dynamic range from configuration text.
+     *
+     * @param value Configuration text from the capture dynamic range setting.
+     * @return Parsed enum value, or the setting-specific default when the text is unknown.
+     */
+    video_t::macos_capture_dynamic_range_e capture_dynamic_range_from_view(const std::string_view value) {
+#ifndef DOXYGEN
+  #define _CONVERT_(x) \
+    if (value == #x##sv) \
+    return video_t::macos_capture_dynamic_range_e::x
+#endif
+      _CONVERT_(sdr);
+      _CONVERT_(hdr_canonical);
+      _CONVERT_(hdr_local);
+#undef _CONVERT_
+      return video_t::macos_capture_dynamic_range_e::hdr_canonical;  // Default to this if value is invalid
+    }
+  }  // namespace macos
+
   namespace sw {
     /**
      * @brief Parse an SVT-AV1 speed preset from configuration text.
@@ -786,6 +807,9 @@ namespace config {
       2,  // vk.tune (default: ll - low latency)
       2,  // vk.rc_mode (default: cbr)
     },
+
+    true,  // macos_disable_vsync
+    video_t::macos_capture_dynamic_range_e::hdr_canonical,  // macos_capture_dynamic_range
 
     {},  // capture
     {},  // encoder
@@ -1684,6 +1708,9 @@ namespace config {
         video.amd.amd_max_au_size = max_au_size;
       }
     }
+
+    bool_f(vars, "macos_disable_vsync", video.macos_disable_vsync);
+    generic_f(vars, "macos_capture_dynamic_range", video.macos_capture_dynamic_range, macos::capture_dynamic_range_from_view);
 
     bool_f(vars, "vt_hpl_means_encode", (bool &) video.vt.vt_hpl_means_encode);
     int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);

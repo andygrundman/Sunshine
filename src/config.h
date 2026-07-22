@@ -132,6 +132,18 @@ namespace config {
       int rc_mode;  ///< Vulkan encoder rate-control mode: driver, CQP, CBR, or VBR.
     } vk;  ///< Vulkan encoder options.
 
+    /**
+     * @brief Dynamic range used by ScreenCaptureKit when capturing an HDR stream on macOS.
+     */
+    enum class macos_capture_dynamic_range_e {
+      sdr,  ///< Capture in standard dynamic range.
+      hdr_canonical,  ///< Capture in HDR with attributes of the canonical display.
+      hdr_local  ///< Capture in HDR with attributes of the local display.
+    };
+
+    bool macos_disable_vsync;  ///< Disable macOS V-Sync (Quartz beam sync) while streaming.
+    macos_capture_dynamic_range_e macos_capture_dynamic_range;  ///< ScreenCaptureKit dynamic range used for HDR streams.
+
     std::string capture;  ///< Capture backend name selected by configuration.
     std::string encoder;  ///< Encoder backend name selected by configuration.
     std::string adapter_name;  ///< Display adapter name selected in configuration.
