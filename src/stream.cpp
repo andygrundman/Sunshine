@@ -1209,18 +1209,6 @@ namespace stream {
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
 
-    server->map(SS_LTR_FRAME_ACK_PTYPE, [&](session_t *session, const std::string_view &payload) {
-      if (payload.size() != sizeof(SS_LTR_FRAME_ACK)) {
-        BOOST_LOG(error)
-          << "Unexpected SS_LTR_FRAME_ACK control message payload size: got "sv << payload.size()
-          << ", expected " << sizeof(SS_LTR_FRAME_ACK);
-        return;
-      }
-      auto ltr_frame_ack = (const SS_LTR_FRAME_ACK *) payload.data();
-      BOOST_LOG(info)
-        << "SS_LTR_FRAME_ACK control message, frame index "sv << ltr_frame_ack->frameIndex;
-    });
-
     server->map(packetTypes[IDX_INPUT_DATA], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_INPUT_DATA]"sv;
 
@@ -1541,11 +1529,11 @@ namespace stream {
     platf::set_thread_name("stream::videoBroadcast");
     platf::adjust_thread_priority(platf::thread_priority_e::high);
 
-    logging::min_max_avg_periodic_logger<double> frame_processing_latency_logger(info, "Frame processing latency", "ms");
+    logging::min_max_avg_periodic_logger<double> frame_processing_latency_logger(debug, "Frame processing latency", "ms");
 
-    logging::time_delta_periodic_logger frame_send_batch_latency_logger(info, "Network: each send_batch() latency");
-    logging::time_delta_periodic_logger frame_fec_latency_logger(info, "Network: each FEC block latency");
-    logging::time_delta_periodic_logger frame_network_latency_logger(info, "Network: frame's overall network latency");
+    logging::time_delta_periodic_logger frame_send_batch_latency_logger(debug, "Network: each send_batch() latency");
+    logging::time_delta_periodic_logger frame_fec_latency_logger(debug, "Network: each FEC block latency");
+    logging::time_delta_periodic_logger frame_network_latency_logger(debug, "Network: frame's overall network latency");
 
     crypto::aes_t iv(12);
 
@@ -1588,7 +1576,6 @@ namespace stream {
       frame_header.headerType = 0x01;  // Short header type
       frame_header.frameType = packet->is_idr()                     ? 2 :
                                packet->after_ref_frame_invalidation ? 5 :
-                               //packet->is_ltr                       ? 6 :
                                                                       1;
       frame_header.lastPayloadLen = (payload.size() + sizeof(frame_header)) % (session->config.packetsize - sizeof(NV_VIDEO_PACKET));
       if (frame_header.lastPayloadLen == 0) {
@@ -1733,9 +1720,9 @@ namespace stream {
           size_t next_shard_to_send = 0;
 
           // RTP video timestamps use a 90 KHz clock, anchored to when the frame was captured.
-          // Encoders that repurpose frame_timestamp (e.g. VideoToolbox's host processing latency
-          // modes) supply the capture time separately in capture_pacing_timestamp.
-          // When no timestamp is available (duplicate frames), the timestamp from rate control is used instead.
+          // Encoders that repurpose frame_timestamp (e.g. VideoToolbox) supply the capture time
+          // separately in capture_pacing_timestamp. When no timestamp is available (duplicate frames),
+          // the timestamp from rate control is used instead.
           bool frame_is_dupe = false;
           auto rtp_anchor = packet->capture_pacing_timestamp ? packet->capture_pacing_timestamp : packet->frame_timestamp;
           if (!rtp_anchor) {

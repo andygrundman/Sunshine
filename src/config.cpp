@@ -790,7 +790,6 @@ namespace config {
     },  // amd
 
     {
-      true, // vt_hpl_means_encode
       0, // vt_allow_sw
       0, // vt_require_sw
     },  // vt
@@ -1712,7 +1711,6 @@ namespace config {
     bool_f(vars, "macos_disable_vsync", video.macos_disable_vsync);
     generic_f(vars, "macos_capture_dynamic_range", video.macos_capture_dynamic_range, macos::capture_dynamic_range_from_view);
 
-    bool_f(vars, "vt_hpl_means_encode", (bool &) video.vt.vt_hpl_means_encode);
     int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
     int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
 

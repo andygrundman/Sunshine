@@ -19,6 +19,7 @@
 #include "src/platform/macos/nv12_zero_device.h"
 #include "src/platform/macos/sck_video.h"
 #include "cf_helpers.h"
+#include "qpc_chrono.h"
 
 // Avoid conflict between AVFoundation and libavutil both defining AVMediaType
 #define AVMediaType AVMediaType_FFmpeg
@@ -220,51 +221,31 @@ namespace platf {
 
         //BOOST_LOG(debug) << cf_desc_to_std_string(sb);
 
-        // Our timestamps here are:
-        // pts: base display time, used for pacing
-        // CaptureLatencyTime: time capture was completed / start of encode
+        // This is the timestamp of the vsync when the captured frame was or will be displayed.
+        // It's possible for it to be delivered to this callback before being displayed.
+        auto present_timestamp = steady_clock::now();
 
-        std::optional<steady_clock::time_point> capture_pacing_timestamp;
-        //std::optional<steady_clock::time_point> capture_ts;
-        CMTime pts = CMSampleBufferGetPresentationTimeStamp(sb);
-        if (sc->stream.synchronizationClock) {
-          CMTime ptsSynced = CMSyncConvertTime(pts, sc->stream.synchronizationClock, CMClockGetHostTimeClock());
-          pts = ptsSynced;
-        }
-        capture_pacing_timestamp = steady_clock::time_point(nanoseconds(pts.value));
-
-        // track the capture latency
-        CMTime clt = kCMTimeInvalid;
+        int64_t display_ticks = 0;
         CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sb, false);
         if (attachments && CFArrayGetCount(attachments) > 0) {
           auto attachment = (CFDictionaryRef) CFArrayGetValueAtIndex(attachments, 0);
-          CFTypeRef capture_latency = CFDictionaryGetValue(attachment, @"SCStreamMetricCaptureLatencyTime");
-          if (capture_latency != NULL) {
-            double capture_latency_time = 0.0;
-            CFNumberGetValue((CFNumberRef) capture_latency, kCFNumberDoubleType, &capture_latency_time);
-            clt = CMTimeMakeWithSeconds(capture_latency_time, NSEC_PER_SEC);
-            if (sc->stream.synchronizationClock) {
-              CMTime cltSynced = CMSyncConvertTime(clt, sc->stream.synchronizationClock, CMClockGetHostTimeClock());
-              clt = cltSynced;
-            }
+          CFTypeRef cf_display_time = CFDictionaryGetValue(attachment, SCStreamFrameInfoDisplayTime);
+          if (cf_display_time != NULL) {
+            CFNumberGetValue((CFNumberRef) cf_display_time, kCFNumberSInt64Type, &display_ticks);
+            const int64_t delta_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - mach_ticks_to_ns(display_ticks);
+            present_timestamp -= duration_cast<steady_clock::duration>(nanoseconds(delta_ns));
           }
         }
 
-        // if (attachmentsArray != NULL && CFArrayGetCount(attachmentsArray) > 0) {
-        //   NSDictionary *attachments = (NSDictionary *) CFArrayGetValueAtIndex(attachmentsArray, 0);
-        //   NSNumber *captureLatencyTime = attachments[@"SCStreamMetricCaptureLatencyTime"];
-        //   if (captureLatencyTime != nil) {
-        //     capture_ts = steady_clock::time_point(duration_cast<steady_clock::duration>(duration<double>(captureLatencyTime.doubleValue)));
-        //   }
-        // }
-
-        CFTimeInterval now = CACurrentMediaTime();
-        BOOST_LOG(debug) << "pts " << cm_time_to_std_string(pts)
-                        << " clt " << cm_time_to_std_string(clt)
-                        << " now " << std::fixed << std::setprecision(3) << now;
-        BOOST_LOG(debug) << std::fixed << std::setprecision(3)
-                         << " now - pts " << (now - CMTimeGetSeconds(pts)) * 1000
-                         << " now - clt " << (now - CMTimeGetSeconds(clt)) * 1000;
+        if (!display_ticks) {
+          // fallback to sample buffer's pts, if this fails we'll at least have now()
+          const CMTime pts = CMSampleBufferGetPresentationTimeStamp(sb);
+          if (CMTIME_IS_VALID(pts)) {
+            const CMTime host_now = CMClockGetTime(CMClockGetHostTimeClock());
+            const double delta_sec = CMTimeGetSeconds(CMTimeSubtract(host_now, pts));
+            present_timestamp -= duration_cast<steady_clock::duration>(duration<double>(delta_sec));
+          }
+        }
 
         auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sb);
         auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
@@ -285,13 +266,8 @@ namespace platf {
           img_out->pixel_pitch = img_out->width ? img_out->row_pitch / img_out->width : 0;
         }
 
-        // Fall back to delivery time when the sample carries no display time
-        // (missing attachment); the pacing loop dereferences this unconditionally
-        if (!capture_pacing_timestamp) {
-          capture_pacing_timestamp = steady_clock::now();
-        }
-        img_out->capture_pacing_timestamp = capture_pacing_timestamp;
-        img_out->frame_timestamp = capture_pacing_timestamp;
+        img_out->capture_pacing_timestamp = present_timestamp; // used for pacing & pts
+        img_out->frame_timestamp = present_timestamp;          // used for host latency stat, maybe should be now()
 
         return capture_e::ok;
       }

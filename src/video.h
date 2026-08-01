@@ -356,7 +356,7 @@ namespace video {
       option_t(const option_t &) = default;
 
       std::string name;  ///< Encoder command-line option name.
-      std::variant<int, int *, std::optional<int> *, std::function<int()>, std::string, std::string *, std::function<const std::string(const config_t &)>> value;  ///< Literal, pointer, or callback that supplies the option value.
+      std::variant<bool, int, int *, std::optional<int> *, std::function<int()>, std::string, std::string *, std::function<const std::string(const config_t &)>> value;  ///< Literal, pointer, or callback that supplies the option value.
 
       /**
        * @brief Store a named encoder option and its value source.
@@ -546,9 +546,8 @@ namespace video {
     std::vector<replace_t> *replacements = nullptr;  ///< Optional encoded-byte substitutions applied before packetization.
     void *channel_data = nullptr;  ///< Platform or protocol state carried with this packet.
     bool after_ref_frame_invalidation = false;  ///< Whether the frame follows reference-frame invalidation.
-    bool is_ltr = false;
-    std::optional<std::chrono::steady_clock::time_point> capture_pacing_timestamp;
-    std::optional<std::chrono::steady_clock::time_point> frame_timestamp;  ///< Capture timestamp associated with the frame.
+    std::optional<std::chrono::steady_clock::time_point> capture_pacing_timestamp;  ///< Timestamp frame was captured, used for pacing.
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp;  ///< Capture timestamp before encoding, used for Host Processing Latency.
   };
 
   /**

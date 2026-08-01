@@ -26,11 +26,11 @@ namespace ca {
   // kAudioDevicePermissionsError = '!hog'
 
   inline std::string OSStatusToString(OSStatus error) {
-    uint32_t be = CFSwapInt32HostToBig(static_cast<uint32_t>(error));
-    const unsigned char c1 = static_cast<unsigned char>((be >> 24) & 0xFF);
-    const unsigned char c2 = static_cast<unsigned char>((be >> 16) & 0xFF);
-    const unsigned char c3 = static_cast<unsigned char>((be >> 8) & 0xFF);
-    const unsigned char c4 = static_cast<unsigned char>((be >> 0) & 0xFF);
+    const uint32_t val = static_cast<uint32_t>(error);
+    const unsigned char c1 = static_cast<unsigned char>((val >> 24) & 0xFF);
+    const unsigned char c2 = static_cast<unsigned char>((val >> 16) & 0xFF);
+    const unsigned char c3 = static_cast<unsigned char>((val >> 8) & 0xFF);
+    const unsigned char c4 = static_cast<unsigned char>((val >> 0) & 0xFF);
 
     auto is_printable = [](unsigned char c) -> bool {
       return c >= 32 && c <= 126;

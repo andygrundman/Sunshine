@@ -114,7 +114,6 @@ namespace config {
     } amd;  ///< AMD AMF encoder options.
 
     struct {
-      bool vt_hpl_means_encode;  // XXX REMOVE
       int vt_allow_sw;  ///< Whether VideoToolbox may use software encoding.
       int vt_require_sw;  ///< Whether VideoToolbox must use software encoding.
     } vt;  ///< VideoToolbox encoder options.

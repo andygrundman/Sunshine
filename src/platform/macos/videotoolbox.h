@@ -80,7 +80,7 @@ namespace video {
      * @brief Create, configure and prepare the VTCompressionSession.
      * @return `true` on success. The session must not be used if this fails.
      */
-    bool init_encoder();
+    bool init_encoder(const encoder_t::codec_t &codec);
 
     int convert(platf::img_t &img) override;
 
@@ -102,7 +102,7 @@ namespace video {
     friend void output_callback(void *, void *, OSStatus, VTEncodeInfoFlags, CMSampleBufferRef);
 
   private:
-    bool configure_session();
+    bool configure_session(const encoder_t::codec_t &codec);
 
     bool is_vt_property_supported(CFStringRef key);
     bool set_vt_property(CFStringRef key, int32_t value);
@@ -116,21 +116,10 @@ namespace video {
     VTCompressionSessionRef session = NULL;
     CFDictionaryRef supported_keys = NULL;
     std::atomic<bool> force_idr{false};
-    std::atomic<bool> force_ltr{false};
     CMTime last_pts = kCMTimeInvalid;
     std::chrono::steady_clock::time_point last_frame_tick {};
 
-    // encoder options, most should not be changed for optimal performance
     bool LowLatencyRateControl = true;
-    bool RealTime = true;
-    bool EnableLTR = false; // LowLatencyRateControl;
-    int32_t LTRFrameInterval = 120 * 10;
-    bool AllowOpenGOP = true;
-    bool SpeedOverQuality = true;
-    int32_t MaxKeyFrameInterval = 65535;
-    int32_t MaxKeyFrameIntervalDuration = 65535;
-    bool AllowTemporalCompression = true;
-    bool AllowFrameReordering = false;
   };
 
 }  // namespace video

@@ -3048,48 +3048,6 @@ supported on the current platform.
 
 ## VideoToolbox Encoder
 
-### add keyframe interval, expand this to all backends
-### speed over quality
-
-### vt_keyframe_interval
-
-
-
-### vt_hpl_means_encode
-
-<table>
-    <tr>
-        <td>Description</td>
-        <td colspan="2">
-            The Host Processing Latency value reported to Moonlight shows the time
-            it takes for VideoToolbox to encode one frame, and matches how the field
-            works on other platforms. Disable this setting to also include the time needed
-            to capture the frame.
-        </td>
-    </tr>
-    <tr>
-        <td>Default</td>
-        <td colspan="2">@code{}
-            true
-            @endcode</td>
-    </tr>
-    <tr>
-        <td>Example</td>
-        <td colspan="2">@code{}
-            vt_hpl_means_encode = true
-            @endcode</td>
-    </tr>
-    <tr>
-        <td rowspan="4">Choices</td>
-        <td>true</td>
-        <td>HPL reports the encoding time.</td>
-    </tr>
-    <tr>
-        <td>false</td>
-        <td>HPL reports the capture + encoding time.</td>
-    </tr>
-</table>
-
 ### vt_software
 
 <table>

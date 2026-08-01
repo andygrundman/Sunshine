@@ -11,6 +11,7 @@
 #include "sck_picker.h"
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/platform/macos/coreaudio_helpers.h"
 
 #include <dlfcn.h>
 #include <mutex>
@@ -138,9 +139,9 @@ void sck_video_capture_destroy(struct screen_capture *sc) {
   if (sc->video_queue) {
     dispatch_release(sc->video_queue);
   }
-  // if (sc->audio_queue) {
-  //   dispatch_release(sc->audio_queue);
-  // }
+  if (sc->audio_queue) {
+    dispatch_release(sc->audio_queue);
+  }
 
   os_event_destroy(sc->frame_ready);
   pthread_mutex_destroy(&sc->mutex);
@@ -281,16 +282,22 @@ static bool init_screen_stream(struct screen_capture *sc) {
   [sc->stream_properties setPreservesAspectRatio:YES];
   [sc->stream_properties setScalesToFit:YES];
 
-  // I'm not sure if it's better to use the display refresh rate or the stream fps as the basis for capture rate
-  //CMTime frameTimeInterval = CMTimeMake((int64_t) sc->display_refresh_rate.den, sc->display_refresh_rate.num);
-  CMTime frameTimeInterval = CMTimeMake((int64_t) sc->fps.den, sc->fps.num);
-
-  CMTime minimumUpdateTime = CMTimeMultiplyByFloat64(frameTimeInterval, 0.9);
-  [sc->stream_properties setMinimumFrameInterval:minimumUpdateTime];
+  CMTime interval;
+  if (sc->capture_interval_is_refresh_rate) {
+    // This needs more testing, setting capture rate to refresh rate.
+    interval = CMTimeMake((int64_t) sc->display_refresh_rate.den, sc->display_refresh_rate.num);
+    [sc->stream_properties setMinimumFrameInterval:interval];
+  } else {
+    // Default is to capture at 110% of the requested FPS. This is borrowed from OBS, a little headroom is needed
+    // to ensure the capture doesn't miss frames.
+    interval = CMTimeMake((int64_t) sc->fps.den, sc->fps.num);
+    CMTime minimumUpdateTime = CMTimeMultiplyByFloat64(interval, 0.9);
+    [sc->stream_properties setMinimumFrameInterval:minimumUpdateTime];
+  }
 
   BOOST_LOG(info) << "ScreenCaptureKit capturing with minimumFrameInterval "
-                  << std::setprecision(3) << CMTimeGetSeconds(minimumUpdateTime)
-                  << " (" << (1.0 / CMTimeGetSeconds(minimumUpdateTime)) << " fps)";
+                  << std::setprecision(3) << (CMTimeGetSeconds(interval) * 1000.0)
+                  << "ms (" << (1.0 / CMTimeGetSeconds(interval)) << " fps)";
 
   if (sc->software_encoder) {
     [sc->stream_properties setPixelFormat:kCVPixelFormatType_32BGRA];
@@ -329,24 +336,28 @@ static bool init_screen_stream(struct screen_capture *sc) {
     [sc->stream_properties setColorMatrix:kCVImageBufferYCbCrMatrix_ITU_R_709_2];
   }
 
+  BOOST_LOG(info) << "ScreenCaptureKit using pixel format " << ca::Status(sc->stream_properties.pixelFormat)
+                  << " for chroma " << (sc->chroma444 ? "4:4:4" : "4:2:0");
+
   if (config::video.macos_disable_vsync) {
     set_quartz_vsync(false);
     sc->vsync_disabled = true;
   }
 
-  // if (sc->capture_audio) {
-  //   [sc->stream_properties setCapturesAudio:YES];
-  //   [sc->stream_properties setExcludesCurrentProcessAudio:YES];
-  //   [sc->stream_properties setChannelCount:sc->audio_channels];
+  if (sc->capture_audio) {
+    [sc->stream_properties setCapturesAudio:YES];
+    [sc->stream_properties setExcludesCurrentProcessAudio:YES];
+    [sc->stream_properties setChannelCount:2]; // SCK is stereo only
+    [sc->stream_properties setSampleRate:48000];
 
-  //   if (sc->audio_only) {
-  //     // We still have to capture some video, but we can make it very lightweight
-  //     [sc->stream_properties setMinimumFrameInterval:CMTimeMake(5, 1)];
-  //     [sc->stream_properties setCaptureDynamicRange:SCCaptureDynamicRangeSDR];
-  //     [sc->stream_properties setWidth:1280];
-  //     [sc->stream_properties setHeight:720];
-  //   }
-  // }
+    if (sc->audio_only) {
+      // We still have to capture some video, but we can make it very lightweight
+      [sc->stream_properties setMinimumFrameInterval:CMTimeMake(5, 1)];
+      [sc->stream_properties setCaptureDynamicRange:SCCaptureDynamicRangeSDR];
+      [sc->stream_properties setWidth:1280];
+      [sc->stream_properties setHeight:720];
+    }
+  }
 
   sc->stream = [[SCStream alloc] initWithFilter:content_filter
                                 configuration:sc->stream_properties
@@ -357,26 +368,26 @@ static bool init_screen_stream(struct screen_capture *sc) {
 
   NSError *addStreamOutputError = nil;
   BOOL did_add_output = [sc->stream addStreamOutput:sc->capture_delegate
-                                             type:SCStreamOutputTypeScreen
-                               sampleHandlerQueue:sc->video_queue
-                                            error:&addStreamOutputError];
+                                               type:SCStreamOutputTypeScreen
+                                 sampleHandlerQueue:sc->video_queue
+                                              error:&addStreamOutputError];
   if (!did_add_output) {
     BOOST_LOG(error) << "ScreenCaptureKit: Failed to add video stream output with error: "
                      << [[addStreamOutputError localizedFailureReason] cStringUsingEncoding:NSUTF8StringEncoding];
     return !did_add_output;
   }
 
-  // if (sc->capture_audio) {
-  //   did_add_output = [sc->stream addStreamOutput:sc->capture_delegate
-  //                                             type:SCStreamOutputTypeAudio
-  //                               sampleHandlerQueue:sc->audio_queue
-  //                                             error:&addStreamOutputError];
-  //   if (!did_add_output) {
-  //     BOOST_LOG(error) << "ScreenCaptureKit: Failed to add audio stream output with error: "
-  //                     << [[addStreamOutputError localizedFailureReason] cStringUsingEncoding:NSUTF8StringEncoding];
-  //     return !did_add_output;
-  //   }
-  // }
+  if (sc->capture_audio) {
+    did_add_output = [sc->stream addStreamOutput:sc->capture_delegate
+                                            type:SCStreamOutputTypeAudio
+                              sampleHandlerQueue:sc->audio_queue
+                                           error:&addStreamOutputError];
+    if (!did_add_output) {
+      BOOST_LOG(error) << "ScreenCaptureKit: Failed to add audio stream output with error: "
+                       << [[addStreamOutputError localizedFailureReason] cStringUsingEncoding:NSUTF8StringEncoding];
+      return !did_add_output;
+    }
+  }
 
   // A picker needs to be configured so the user can change captured content from the menu bar.
   // This picker is also used to display the picker UI from the web UI.
@@ -387,7 +398,7 @@ static bool init_screen_stream(struct screen_capture *sc) {
   SCContentSharingPickerConfiguration* picker_config = [sc->picker defaultConfiguration];
   picker_config.allowsChangingSelectedContent = YES;
 
-  // prevent capture of Sunshine itself, in case it's possible
+  // prevent capture of Sunshine itself
   NSMutableArray<NSString*>* arr = [NSMutableArray array];
   [arr addObject:[NSString stringWithFormat:@"%s", PROJECT_FQDN]];
   picker_config.excludedBundleIDs = arr;
@@ -409,7 +420,7 @@ static bool init_screen_stream(struct screen_capture *sc) {
   return did_stream_start;
 }
 
-struct screen_capture *sck_video_capture_create(platf::mem_type_e hwdevice_type, const std::string &capture_target, const video::config_t &config) {
+struct screen_capture *sck_video_capture_create(platf::mem_type_e hwdevice_type, const std::string &capture_target, const video::config_t &vconfig) {
   struct screen_capture *sc = (struct screen_capture *) bzalloc(sizeof(struct screen_capture));
 
   sc->show_cursor = true;
@@ -422,15 +433,15 @@ struct screen_capture *sck_video_capture_create(platf::mem_type_e hwdevice_type,
   sc->application_id = nil;
   sc->capture_type = ScreenCaptureDisplayStream;
   sc->software_encoder = hwdevice_type == platf::mem_type_e::system;
-  sc->width = config.width;
-  sc->height = config.height;
+  sc->width = vconfig.width;
+  sc->height = vconfig.height;
+  sc->capture_interval_is_refresh_rate = false; // when false, captures at the requested FPS
 
   sc->capture_delegate = [[ScreenCaptureDelegate alloc] init];
   sc->capture_delegate.sc = sc;
 
-  // sc->capture_audio = config.stream_audio;
-  // sc->audio_only = !config.stream_video;
-  // sc->audio_channels = config.channels; // only supports mono and stereo
+  sc->capture_audio = false; // for future use
+  sc->audio_only = false; // for future use
 
   os_sem_init(&sc->shareable_content_available, 1);
   os_event_init(&sc->frame_ready, OS_EVENT_TYPE_AUTO);
@@ -447,16 +458,17 @@ struct screen_capture *sck_video_capture_create(platf::mem_type_e hwdevice_type,
                    << " display_id " << sc->display_id
                    << " application_id " << sc->application_id ? sc->application_id.UTF8String : "<nil>";
 
-  sc->chroma444 = config.chromaSamplingType == 1;
-  sc->colorspace = video::colorspace_from_client_config(config, true);
-  sc->fps = AVRational {config.framerate, 1};
-  if (config.framerateX100 > 0) {
-    sc->fps = video::framerateX100_to_rational(config.framerateX100);
+  sc->chroma444 = vconfig.chromaSamplingType == 1;
+  sc->capture_interval_is_refresh_rate = false;
+  sc->colorspace = video::colorspace_from_client_config(vconfig, true);
+  sc->fps = AVRational {vconfig.framerate, 1};
+  if (vconfig.framerateX100 > 0) {
+    sc->fps = video::framerateX100_to_rational(vconfig.framerateX100);
   }
 
   // audio is on a higher priority queue
   sc->video_queue = dispatch_queue_create("dev.lizardbyte.app.Sunshine.video", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, -1));
-  //sc->audio_queue = dispatch_queue_create("dev.lizardbyte.app.Sunshine.audio", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, -1));
+  sc->audio_queue = dispatch_queue_create("dev.lizardbyte.app.Sunshine.audio", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, -1));
 
   if (!init_screen_stream(sc)) {
     goto fail;
@@ -835,7 +847,10 @@ bool sck_present_picker() {
 /// audio capture
 
 void screen_stream_audio_update(struct screen_capture *sc, CMSampleBufferRef sample_buffer) {
-  // TODO
+  // TODO: this is the only way to capture audio from only the streamed apps/windows. The
+  // Tap API works well but always captures everything.
+
+  // log_sample_buffer(sample_buffer);
 }
 
 /// list handling for available capture targets

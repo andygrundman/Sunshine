@@ -4,7 +4,7 @@
 # Make sure to stop the previous version first.
 #
 # Recommended command-line args:
-# --skip-notarize --skip-tests --debug --num-processors=10
+# --skip-notarize --skip-tests --num-processors=10
 
 set -euo pipefail
 

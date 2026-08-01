@@ -1400,8 +1400,18 @@ namespace video {
       platf::pix_fmt_e::p410
     ),
     {}, // no av1 encode yet
+    // Do not change VT options without reading the VTCompressionProperties.h header file.
     {
-      {},  // Common options
+      {
+        {"AllowFrameReordering"s, false},
+        {"AllowTemporalCompression"s, true},
+        {"AllowOpenGOP"s, false},
+        {"MaxKeyFrameInterval"s, 65535},
+        {"MaxKeyFrameIntervalDuration"s, 65535},
+        {"PrioritizeEncodingSpeedOverQuality"s, true},
+        {"RealTime"s, true},
+        {"ReferenceBufferCount"s, 1},
+      },  // Common options
       {},  // SDR-specific options
       {},  // HDR-specific options
       {},  // YUV444 SDR-specific options
@@ -1411,7 +1421,19 @@ namespace video {
       {},  // capabilities
     },
     {
-      {},  // Common options
+      // Note: ReferenceBufferCount is intentionally omitted for H.264 because
+      // VideoToolbox on Apple Silicon produces all-IDR output when
+      // ReferenceBufferCount=1 is set for H.264, causing massive bandwidth
+      // inflation (~3x) and frame drops. See LizardByte/Sunshine#5013.
+      {
+        {"AllowFrameReordering"s, false},
+        {"AllowTemporalCompression"s, true},
+        {"AllowOpenGOP"s, false},
+        {"MaxKeyFrameInterval"s, 65535},
+        {"MaxKeyFrameIntervalDuration"s, 65535},
+        {"PrioritizeEncodingSpeedOverQuality"s, true},
+        {"RealTime"s, true},
+      },  // Common options
       {},  // SDR-specific options
       {},  // HDR-specific options
       {},  // YUV444 SDR-specific options
@@ -1628,17 +1650,12 @@ namespace video {
       }
     };
 
-    static int pf_reused = 0;
-    static int pf_alloc = 0;
-    static int pf_sleeps = 0;
-
     auto pull_free_image_callback = [&](std::shared_ptr<platf::img_t> &img_out) -> bool {
       img_out.reset();
       while (capture_ctx_queue->running()) {
         // pick first allocated but unused
         for (auto it = imgs.begin(); it != imgs.end(); it++) {
           if (*it && it->use_count() == 1) {
-            ++pf_reused;
             img_out = *it;
             if (it != imgs.begin()) {
               // move image to the front of the list to prioritize its reusal
@@ -1653,7 +1670,6 @@ namespace video {
           for (auto it = imgs.begin(); it != imgs.end(); it++) {
             if (!*it) {
               // allocate image
-              ++pf_alloc;
               *it = disp->alloc_img();
               img_out = *it;
               if (it != imgs.begin()) {
@@ -1670,13 +1686,10 @@ namespace video {
           trim_imgs();
           img_out->frame_timestamp.reset();
           img_out->capture_pacing_timestamp.reset();
-          if (pf_reused % 20 == 0)
-            BOOST_LOG(debug) << "pull_free alloc/reused/sleeps " << pf_alloc << "/" << pf_reused << "/" << pf_sleeps;
           return true;
         } else {
           // sleep and retry if image pool is full
           std::this_thread::sleep_for(1ms);
-          ++pf_sleeps;
         }
       }
       return false;
@@ -2172,6 +2185,9 @@ namespace video {
       auto handle_option = [&options, &config](const encoder_t::option_t &option) {
         std::visit(
           util::overloaded {
+            [&](bool v) {
+              av_dict_set_int(&options, option.name.c_str(), v ? 1 : 0, 0);
+            },
             [&](int v) {
               av_dict_set_int(&options, option.name.c_str(), v, 0);
             },
@@ -2371,9 +2387,10 @@ namespace video {
   }
 
 #ifdef __APPLE__
-  std::unique_ptr<videotoolbox_encode_session_t> make_videotoolbox_encode_session(const config_t &client_config, std::unique_ptr<platf::videotoolbox_encode_device_t> encode_device) {
+  std::unique_ptr<videotoolbox_encode_session_t> make_videotoolbox_encode_session(const encoder_t &encoder, const config_t &client_config, std::unique_ptr<platf::videotoolbox_encode_device_t> encode_device) {
     auto session = std::make_unique<videotoolbox_encode_session_t>(client_config, std::move(encode_device));
-    if (!session->init_encoder()) {
+    const auto &codec = encoder.codec_from_config(client_config);
+    if (!session->init_encoder(codec)) {
       return nullptr;
     }
 
@@ -2403,7 +2420,7 @@ namespace video {
 #ifdef __APPLE__
     else if (dynamic_cast<platf::videotoolbox_encode_device_t *>(encode_device.get())) {
       auto videotoolbox_encode_device = boost::dynamic_pointer_cast<platf::videotoolbox_encode_device_t>(std::move(encode_device));
-      return make_videotoolbox_encode_session(config, std::move(videotoolbox_encode_device));
+      return make_videotoolbox_encode_session(encoder, config, std::move(videotoolbox_encode_device));
     }
 #endif
 

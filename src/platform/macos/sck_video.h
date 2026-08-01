@@ -68,6 +68,7 @@ struct screen_capture {
   int height;
   video::sunshine_colorspace_t colorspace;
   bool chroma444;
+  bool capture_interval_is_refresh_rate;
   AVRational fps;
   NSString *application_id;
   CGDirectDisplayID display_id;
@@ -78,7 +79,7 @@ struct screen_capture {
 };
 
 void sck_video_capture_destroy(struct screen_capture *sc);
-struct screen_capture *sck_video_capture_create(platf::mem_type_e hwdevice_type, const std::string &capture_target, const video::config_t &config);
+struct screen_capture *sck_video_capture_create(platf::mem_type_e hwdevice_type, const std::string &capture_target, const video::config_t &vconfig);
 void screen_capture_build_content_list(struct screen_capture *sc, bool display_capture);
 bool build_display_list(struct screen_capture *sc, const std::string &display_name);
 bool build_window_list(struct screen_capture *sc, const std::string &window_name);

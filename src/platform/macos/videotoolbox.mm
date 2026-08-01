@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 
 #include <CoreVideo/CoreVideo.h>
 #include <Foundation/Foundation.h>
@@ -20,19 +21,6 @@
 VT_EXPORT const CFStringRef kVTProfileLevel_HEVC_Main44410_AutoLevel = CFSTR("HEVC_Main44410_AutoLevel");
 VT_EXPORT const CFStringRef kVTProfileLevel_HEVC_Main444_AutoLevel = CFSTR("HEVC_Main444_AutoLevel");
 VT_EXPORT const CFStringRef kVTProfileLevel_H264_High444Predictive_AutoLevel = CFSTR("H264_High444Predictive_AutoLevel");
-
-/// helpers
-
-// static void log_vt_property(VTCompressionSessionRef session, CFStringRef prop, std::string label) {
-//   CFTypeRef val = NULL;
-//   OSStatus localErr = VTSessionCopyProperty(session, prop, NULL, &val);
-//   if (localErr == noErr) {
-//     BOOST_LOG(debug) << label << " value is " << cf_desc_to_std_string(val);
-//     CFRelease(val);
-//   } else {
-//     BOOST_LOG(debug) << label << " could not be obtained: " << ca::Status(localErr);
-//   }
-// }
 
 /// Annex B
 static const uint8_t kAnnexBStartCode[4] = {0x00, 0x00, 0x00, 0x01};
@@ -322,7 +310,7 @@ namespace video {
     }
   }
 
-  bool videotoolbox_encode_session_t::configure_session() {
+  bool videotoolbox_encode_session_t::configure_session(const encoder_t::codec_t &codec) {
     const bool chroma444 = config.chromaSamplingType == 1;
 
     CFStringRef profile = NULL;
@@ -347,30 +335,55 @@ namespace video {
         break;
     }
 
-    // We can enable LTR as long as client doesn't report maxNumReferenceFrames == 1
-    EnableLTR = EnableLTR && config.numRefFrames != 1;
-
     set_vt_property(kVTCompressionPropertyKey_ProfileLevel, profile);
-    set_vt_property(kVTCompressionPropertyKey_RealTime, RealTime ? true : false);
-    set_vt_property(kVTCompressionPropertyKey_AllowFrameReordering, AllowFrameReordering ? true : false);
-    set_vt_property(kVTCompressionPropertyKey_AllowOpenGOP, AllowOpenGOP ? true : false);
-    set_vt_property(kVTCompressionPropertyKey_AllowTemporalCompression, AllowTemporalCompression ? true : false);
+
+    // Set simple properties defined in video.cpp
+    {
+      static const std::unordered_map<std::string, CFStringRef> vt_property_keys {
+        {"AllowFrameReordering",               kVTCompressionPropertyKey_AllowFrameReordering},
+        {"AllowTemporalCompression",           kVTCompressionPropertyKey_AllowTemporalCompression},
+        {"AllowOpenGOP",                       kVTCompressionPropertyKey_AllowOpenGOP},
+        {"MaxKeyFrameInterval",                kVTCompressionPropertyKey_MaxKeyFrameInterval},
+        {"MaxKeyFrameIntervalDuration",        kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration},
+        {"PrioritizeEncodingSpeedOverQuality", kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality},
+        {"RealTime",                           kVTCompressionPropertyKey_RealTime},
+        {"ReferenceBufferCount",               kVTCompressionPropertyKey_ReferenceBufferCount},
+      };
+
+      auto handle_option = [this](const encoder_t::option_t &option) {
+        const auto it = vt_property_keys.find(option.name);
+        if (it == vt_property_keys.end()) {
+          BOOST_LOG(error) << "VideoToolbox: unknown property " << option.name;
+          return;
+        }
+
+        const CFStringRef key = it->second;
+
+        std::visit(
+          util::overloaded {
+            [this, key](bool value) {
+              set_vt_property(key, value);
+            },
+            [this, key](int value) {
+              set_vt_property(key, static_cast<int32_t>(value));
+            },
+            [&option](const auto &) {
+              BOOST_LOG(error) << "VideoToolbox: unsupported value type for property " << option.name;
+            }
+          },
+          option.value
+        );
+      };
+
+      for (const auto &option : codec.common_options) {
+        handle_option(option);
+      }
+    }
+
     int32_t bitrate = ((config::video.max_bitrate > 0) ? std::min(config.bitrate, config::video.max_bitrate) : config.bitrate) * 1000;
     set_vt_property(kVTCompressionPropertyKey_AverageBitRate, bitrate);
-    set_vt_property(kVTCompressionPropertyKey_EnableLTR, EnableLTR ? true : false);
     set_vt_property(kVTCompressionPropertyKey_ExpectedFrameRate, av_q2d(device->sc->fps));
-    if (RealTime) {
-      set_vt_property(kVTCompressionPropertyKey_MaximumRealTimeFrameRate, av_q2d(device->sc->fps));
-    }
-    set_vt_property(kVTCompressionPropertyKey_MaxKeyFrameInterval, MaxKeyFrameInterval);
-    set_vt_property(kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, MaxKeyFrameIntervalDuration);
-    set_vt_property(kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, SpeedOverQuality ? true : false);
-
-    if (config.videoFormat == 1) {
-      // h264 doesn't play nice with numRefFrames == 1
-      set_vt_property(kVTCompressionPropertyKey_ReferenceBufferCount, config.numRefFrames);
-    }
-
+    set_vt_property(kVTCompressionPropertyKey_MaximumRealTimeFrameRate, av_q2d(device->sc->fps));
     set_vt_property(kVTCompressionPropertyKey_ColorPrimaries, sunshine_to_vt_primaries(device->colorspace));
     set_vt_property(kVTCompressionPropertyKey_TransferFunction, sunshine_to_vt_transfer(device->colorspace));
     set_vt_property(kVTCompressionPropertyKey_YCbCrMatrix, sunshine_to_vt_matrix(device->colorspace));
@@ -417,20 +430,9 @@ namespace video {
       return;
     }
 
-    //BOOST_LOG(debug) << "encoded frame: " << cf_desc_to_std_string(sampleBuffer);
+    // BOOST_LOG(verbose) << "encoded frame: " << cf_desc_to_std_string(sampleBuffer);
 
     CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
-
-    // Extract LTR token from attachments
-    int32_t ltr_token_value = 0;
-    if (attachments && CFArrayGetCount(attachments) > 0) {
-      auto attachment = (CFDictionaryRef) CFArrayGetValueAtIndex(attachments, 0);
-      CFTypeRef ltr_token = CFDictionaryGetValue(attachment, kVTSampleAttachmentKey_RequireLTRAcknowledgementToken);
-      if (ltr_token != NULL) {
-        CFNumberGetValue((CFNumberRef) ltr_token, kCFNumberIntType, &ltr_token_value);
-      }
-    }
-
     bool is_keyframe = IsKeyframe(attachments); // it's ok if attachments is NULL
     std::vector<uint8_t> annex_b;
     if (!SampleBufferToAnnexB(sampleBuffer, is_keyframe, annex_b)) {
@@ -440,48 +442,21 @@ namespace video {
 
     auto packet = std::make_unique<packet_raw_generic>(std::move(annex_b), frame_ref->frame_nr, is_keyframe);
     packet->channel_data = frame_ref->channel_data;
-    packet->is_ltr = ltr_token_value > 0;
     packet->capture_pacing_timestamp = frame_ref->capture_pacing_timestamp;
     packet->frame_timestamp = frame_ref->frame_timestamp;
 
-    // capture->encode-start wait, only measurable when the frame has a capture timestamp
     auto capture_time_ms = std::chrono::duration<double, std::milli>(*frame_ref->frame_timestamp - *frame_ref->capture_pacing_timestamp).count();
     auto encode_time_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - *frame_ref->frame_timestamp).count();
-    BOOST_LOG(debug) << "VideoToolbox:   end encode #" << frame_ref->frame_nr
+    BOOST_LOG(verbose) << "VideoToolbox:   end encode #" << frame_ref->frame_nr
                      << " took" << std::fixed << std::setprecision(3)
                      << " capture=" << capture_time_ms
                      << " enc=" << encode_time_ms
-                     << " size " << packet->data_size()
-                     << (packet->is_ltr ? " LTR" : "");
+                     << " size " << packet->data_size();
 
-    // Host Processing Latency: with vt_hpl_means_encode (the default), frame_timestamp
-    // stays the encode start time, so HPL reports the encoder's processing time, like other platforms.
-    // RTP timestamps are unaffected either way; stream.cpp uses capture_pacing_timestamp.
-    if (!config::video.vt.vt_hpl_means_encode && frame_ref->capture_pacing_timestamp) {
-      packet->frame_timestamp = frame_ref->capture_pacing_timestamp;
-    }
     frame_ref->packets->raise(std::move(packet));
   }
 
-  // static inline CFDictionaryRef create_pixbuf_spec(int32_t pixel_format, int32_t width, int32_t height) {
-  //   CFNumberRef PixelFormat = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &pixel_format);
-  //   CFNumberRef Width = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &width);
-  //   CFNumberRef Height = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &height);
-
-  //   CFTypeRef keys[3] = {kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferWidthKey, kCVPixelBufferHeightKey};
-  //   CFTypeRef values[3] = {PixelFormat, Width, Height};
-
-  //   CFDictionaryRef pixbuf_spec = CFDictionaryCreate(
-  //     kCFAllocatorDefault, keys, values, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-
-  //   CFRelease(PixelFormat);
-  //   CFRelease(Width);
-  //   CFRelease(Height);
-
-  //   return pixbuf_spec;
-  // }
-
-  bool videotoolbox_encode_session_t::init_encoder() {
+  bool videotoolbox_encode_session_t::init_encoder(const encoder_t::codec_t &codec) {
     bool ret = true;
 
     // Ask the capture stream to deliver frames at the encode resolution
@@ -497,8 +472,6 @@ namespace video {
                            config::video.vt.vt_allow_sw ? kCFBooleanFalse : kCFBooleanTrue};
     CFDictionaryRef encoder_spec = CFDictionaryCreate(
       kCFAllocatorDefault, keys, values, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-
-    //CFDictionaryRef pixbuf_spec = create_pixbuf_spec((int32_t)device->pixel_format, config.width, config.height);
 
     OSStatus err = VTCompressionSessionCreate(
       kCFAllocatorDefault,
@@ -518,7 +491,7 @@ namespace video {
       goto out;
     }
 
-    if (!configure_session()) {
+    if (!configure_session(codec)) {
       BOOST_LOG(error) << "VideoToolbox error: couldn't configure encoder";
       ret = false;
       goto out;
@@ -535,7 +508,6 @@ namespace video {
 
 out:
     CFRelease(encoder_spec);
-    //CFRelease(pixbuf_spec);
 
     return ret;
   }
@@ -553,12 +525,11 @@ out:
 
   void videotoolbox_encode_session_t::request_normal_frame() {
     force_idr.store(false);
-    force_ltr.store(false);
   }
 
   void videotoolbox_encode_session_t::invalidate_ref_frames(int64_t first_frame, int64_t last_frame) {
-    force_ltr.store(true);
-    BOOST_LOG(debug) << "VideoToolbox: RFI request, will send LTR-P for frames " << first_frame << "-" << last_frame;
+    BOOST_LOG(error) << "VideoToolbox doesn't support reference frame invalidation";
+    request_idr_frame();
   }
 
   bool videotoolbox_encode_session_t::get_cached_pixel_buffer(CVPixelBufferRef *buf_out)
@@ -606,13 +577,6 @@ out:
     }
 
     bool idr = force_idr.load();
-    bool ltr = EnableLTR && force_ltr.load();
-
-    if (EnableLTR && frame_ref->frame_nr % LTRFrameInterval == 0) {
-      // send a periodic LTR frame
-      ltr = true;
-      BOOST_LOG(debug) << "frame " << frame_ref->frame_nr << " is periodic LTR-P";
-    }
 
     CFMutableDictionaryRef frame_properties = NULL;
     auto set_frame_property = [&frame_properties](CFStringRef key, CFTypeRef value) {
@@ -624,9 +588,6 @@ out:
 
     if (idr) {
       set_frame_property(kVTEncodeFrameOptionKey_ForceKeyFrame, kCFBooleanTrue);
-    }
-    else if (ltr) {
-      set_frame_property(kVTEncodeFrameOptionKey_ForceLTRRefresh, kCFBooleanTrue);
     }
 
     CMTime pts = kCMTimeInvalid;
@@ -650,13 +611,12 @@ out:
       }
     }
 
-    BOOST_LOG(debug) << "VideoToolbox: start encode #" << frame_ref->frame_nr
+    BOOST_LOG(verbose) << "VideoToolbox: start encode #" << frame_ref->frame_nr
                      << std::fixed << std::setprecision(3)
                      << " pts " << CMTimeGetSeconds(pts)
                      << " (+" << ((double)CMTimeGetSeconds(CMTimeSubtract(pts, last_pts)) * 1000.0) << " ms"
                      << (pts_is_real ? "" : ", synthetic") << ")"
-                     << (idr ? " req IDR" : "")
-                     << (ltr ? " req LTR" : "");
+                     << (idr ? " req IDR" : "");
 
     last_pts = pts;
     last_frame_tick = std::chrono::steady_clock::now();
