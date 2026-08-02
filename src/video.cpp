@@ -2532,7 +2532,8 @@ namespace video {
       }
 
       std::vector<uint8_t> bitstream;
-      if (encoder->encode(*last_img, bitstream)) {
+      size_t fec_head_bytes = 0;
+      if (encoder->encode(*last_img, bitstream, fec_head_bytes)) {
         // Drop this frame rather than tearing down the stream (e.g. a transient/non-CPU frame).
         continue;
       }
@@ -2545,6 +2546,7 @@ namespace video {
       auto packet = std::make_unique<packet_raw_generic>(std::move(bitstream), (int64_t) frame_nr, true);
       packet->channel_data = channel_data;
       packet->frame_timestamp = frame_timestamp;
+      packet->fec_head_bytes = fec_head_bytes;
       packets->raise(std::move(packet));
       frame_nr++;
 

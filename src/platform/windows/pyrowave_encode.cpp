@@ -20,6 +20,7 @@
 #ifdef SUNSHINE_ENABLE_PYROWAVE
 
   #include <algorithm>
+  #include <array>
   #include <cstring>
   #include <map>
   #include <vector>
@@ -240,6 +241,75 @@ namespace platf::pyrowave {
     return ok;
   }
 
+  // PyroWave wavelet layout constants, mirrored from pyrowave_common.hpp.
+  constexpr int DECOMPOSITION_LEVELS = 5;
+  constexpr int NUM_COMPONENTS = 3;
+  constexpr int BANDS_PER_LEVEL = 4;
+  constexpr int WAVELET_ALIGNMENT = 1 << DECOMPOSITION_LEVELS;
+  constexpr int MIN_IMAGE_SIZE = 4 << DECOMPOSITION_LEVELS;
+
+  /**
+   * @brief Map wavelet decomposition levels onto PyroWave's global 32x32 block numbering.
+   *
+   * PyroWave numbers blocks coarsest level first (`WaveletBuffers::init_block_meta()`, iterating
+   * level 4 down to 0, then component, then band) and `Encoder::packetize()` emits them in that
+   * same ascending index order. So a block index alone says which level a block belongs to, and
+   * the bitstream is laid out most-important-first: level 4 (the 1/32-scale LL and its detail
+   * bands) leads, level 0 (the finest detail) trails.
+   *
+   * @param width Encoded luma width.
+   * @param height Encoded luma height.
+   * @param yuv444 True for 4:4:4, false for 4:2:0 (which omits chroma at level 0).
+   * @return Per-level exclusive block-index bound: entry `L` is the first block index belonging
+   *         to a level finer than `L`, i.e. levels 4..L occupy indices `[0, ret[L])`.
+   */
+  std::array<uint32_t, DECOMPOSITION_LEVELS> compute_level_block_ends(int width, int height, bool yuv444) {
+    auto align_up = [](int v) {
+      v = ((v + WAVELET_ALIGNMENT - 1) / WAVELET_ALIGNMENT) * WAVELET_ALIGNMENT;
+      return std::max(v, MIN_IMAGE_SIZE);
+    };
+
+    // The wavelet pyramid starts at half resolution, then halves per level.
+    const int aligned_width = align_up(width);
+    const int aligned_height = align_up(height);
+
+    std::array<uint32_t, DECOMPOSITION_LEVELS> ends {};
+    uint32_t blocks = 0;
+
+    for (int level = DECOMPOSITION_LEVELS - 1; level >= 0; --level) {
+      const int level_width = (aligned_width / 2) >> level;
+      const int level_height = (aligned_height / 2) >> level;
+      const int blocks_x_32 = (level_width + 31) / 32;
+      const int blocks_y_32 = (((level_height + 7) / 8) + 3) / 4;
+
+      for (int component = 0; component < NUM_COMPONENTS; ++component) {
+        // The coarsest level carries the LL band (band 0); finer levels only carry detail bands.
+        // 4:2:0 drops chroma entirely at the finest level.
+        if (level == 0 && component != 0 && !yuv444) {
+          continue;
+        }
+        const int first_band = (level == DECOMPOSITION_LEVELS - 1) ? 0 : 1;
+        blocks += (uint32_t) ((BANDS_PER_LEVEL - first_band) * blocks_x_32 * blocks_y_32);
+      }
+
+      ends[level] = blocks;
+    }
+
+    return ends;
+  }
+
+  /**
+   * @brief Finest wavelet level included in the FEC-protected head.
+   *
+   * The head of a PyroWave frame — the sequence header plus levels 4 and 3 — is where loss is
+   * catastrophic (a single lost LL4 block costs ~10 dB); loss anywhere past it degrades to blur
+   * that partial delivery can show anyway. So the RTP layer protects levels 4 down to this one
+   * with Reed-Solomon and leaves the rest bare. Protecting level 4 alone would be cheaper still
+   * but leaves no floor: one early loss in a bare L3 truncates the frame to L4-only (< 35 dB).
+   * See docs/pyrowave-partial-du-design.md in the client tree for the measurements.
+   */
+  constexpr int FEC_PROTECTED_THROUGH_LEVEL = 3;
+
   struct encoder_t::impl_t {
     pyrowave_device pdev = nullptr;
     pyrowave_encoder enc = nullptr;
@@ -249,6 +319,9 @@ namespace platf::pyrowave {
     bool ten_bit = false;
     bool hdr = false;
     size_t max_bitstream = 0;
+
+    // Exclusive block-index bound per wavelet level; see compute_level_block_ends().
+    std::array<uint32_t, DECOMPOSITION_LEVELS> level_block_ends {};
 
     // Packetization buffers, reused across frames (see the sizing comment in encode()).
     std::vector<uint8_t> scratch;
@@ -831,6 +904,7 @@ namespace platf::pyrowave {
     impl.yuv444 = yuv444;
     impl.ten_bit = ten_bit;
     impl.hdr = hdr && ten_bit;  // HDR color math only makes sense in 10-bit containers
+    impl.level_block_ends = compute_level_block_ends(width, height, yuv444);
 
     // Per-frame byte budget from bitrate. Intra-only: bitrate / fps bytes per frame.
     if (frame_rate <= 0) {
@@ -851,8 +925,11 @@ namespace platf::pyrowave {
     return self;
   }
 
-  int encoder_t::encode(const platf::img_t &img, std::vector<uint8_t> &out) {
+  int encoder_t::encode(const platf::img_t &img, std::vector<uint8_t> &out, size_t &head_bytes) {
     auto &impl = *this->impl;
+
+    // Never leave a previous frame's boundary behind on an early failure return.
+    head_bytes = 0;
 
     if (impl.state == impl_t::state_e::failed) {
       return -1;
@@ -942,6 +1019,25 @@ namespace platf::pyrowave {
       return -1;
     }
 
+    // XXX write header fields, this starts at impl.scratch.data()
+    /*
+    struct BitstreamSequenceHeader
+    {
+      uint32_t width_minus_1 : 14;
+      uint32_t height_minus_1 : 14;
+      uint32_t sequence : 3;
+      uint32_t extended : 1;
+      uint32_t total_blocks : 24;
+      uint32_t code : 2;
+      uint32_t chroma_resolution : 1;
+      uint32_t color_primaries : 1;
+      uint32_t transfer_function : 1;
+      uint32_t ycbcr_transform : 1;
+      uint32_t ycbcr_range : 1;
+      uint32_t chroma_siting : 1;
+    };
+    */
+
     auto put_u32 = [&out](uint32_t v) {
       out.push_back((uint8_t) (v & 0xff));
       out.push_back((uint8_t) ((v >> 8) & 0xff));
@@ -949,9 +1045,28 @@ namespace platf::pyrowave {
       out.push_back((uint8_t) ((v >> 24) & 0xff));
     };
 
+    // Block index of the first block in a packet. Each block starts with an 8-byte
+    // BitstreamHeader whose trailing u32 is { quant_code : 8, block_index : 24 }.
+    auto first_block_index = [&impl](size_t i) {
+      const uint8_t *src = impl.scratch.data() + impl.packets[i].offset;
+      uint32_t w = (uint32_t) src[4] | ((uint32_t) src[5] << 8) | ((uint32_t) src[6] << 16) | ((uint32_t) src[7] << 24);
+      return w >> 8;
+    };
+    const uint32_t head_block_end = impl.level_block_ends[FEC_PROTECTED_THROUGH_LEVEL];
+
     out.clear();
     put_u32((uint32_t) out_packets);
     for (size_t i = 0; i < out_packets; i++) {
+      // The protected head closes at the first packet that *starts* past the last protected
+      // level — a packet holds several blocks and may straddle the level boundary, in which
+      // case it stays whole in the head at the cost of a few blocks of overshoot.
+      //
+      // Packet 0 is skipped because it leads with the BitstreamSequenceHeader rather than a
+      // BitstreamHeader; it is always part of the head anyway.
+      if (head_bytes == 0 && i > 0 && first_block_index(i) >= head_block_end) {
+        head_bytes = out.size();
+      }
+
       put_u32((uint32_t) impl.packets[i].size);
       const uint8_t *src = impl.scratch.data() + impl.packets[i].offset;
       out.insert(out.end(), src, src + impl.packets[i].size);

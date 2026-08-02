@@ -439,6 +439,18 @@ namespace video {
     void *channel_data = nullptr;  ///< Platform or protocol state carried with this packet.
     bool after_ref_frame_invalidation = false;  ///< Whether the frame follows reference-frame invalidation.
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;  ///< Capture timestamp associated with the frame.
+
+    /**
+     * @brief Byte offset where the payload's loss-critical head ends, or 0 for none.
+     *
+     * Only produced by codecs whose bitstream is ordered most-important-first (PyroWave, which
+     * emits coarse wavelet levels before fine ones). The RTP layer cuts the frame's FEC blocks
+     * at this boundary and protects only `[0, fec_head_bytes)` with Reed-Solomon parity — loss
+     * in the head is catastrophic, while the bare tail degrades to blur that the client's
+     * partial-frame delivery can still show. 0 (every other codec, or a frame too small to
+     * split) keeps the normal even split at the configured FEC percentage.
+     */
+    size_t fec_head_bytes = 0;
   };
 
   /**

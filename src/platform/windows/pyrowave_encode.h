@@ -74,9 +74,14 @@ namespace platf::pyrowave {
      *
      * @param img Captured image from the display backend.
      * @param out Receives the encoded, packetized bitstream bytes.
+     * @param head_bytes Receives the byte offset into @p out where the loss-critical head ends
+     *                   (the sequence header plus wavelet levels 4 and 3 — PyroWave emits coarse
+     *                   levels first). The RTP layer protects `[0, head_bytes)` with Reed-Solomon
+     *                   and leaves the tail bare. 0 when the frame is too small to split (and on
+     *                   failure), meaning "use the normal even FEC split".
      * @return 0 on success, negative on failure.
      */
-    int encode(const platf::img_t &img, std::vector<uint8_t> &out);
+    int encode(const platf::img_t &img, std::vector<uint8_t> &out, size_t &head_bytes);
 
   private:
     encoder_t() = default;
